@@ -44,6 +44,31 @@
           </div>
         </div>
 
+        <aside class="trace-card" aria-label="kSTEP execution flow">
+          <div class="trace-header">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <ol class="trace-flow">
+            <li>
+              <strong>Driver program</strong>
+              <span>Declares event sequence</span>
+            </li>
+            <li>
+              <strong>Control module</strong>
+              <span>Dispatches scheduler events</span>
+            </li>
+            <li>
+              <strong>Isolated CPUs</strong>
+              <span>Run unmodified scheduler code</span>
+            </li>
+            <li>
+              <strong>Noise-free trace</strong>
+              <span>Replays exactly across runs</span>
+            </li>
+          </ol>
+        </aside>
       </section>
 
       <section class="metric-strip" aria-label="Highlights">
