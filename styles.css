@@ -102,19 +102,21 @@ main,
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
   font-weight: 800;
   letter-spacing: -0.04em;
 }
 
 .brand-mark {
   display: grid;
-  width: 34px;
+  width: auto;
+  min-width: 86px;
   height: 34px;
+  padding: 0 14px;
   place-items: center;
   border-radius: 12px;
   background: linear-gradient(135deg, var(--cyan), var(--blue) 52%, var(--violet));
   color: #07101d;
+  letter-spacing: -0.04em;
   font-weight: 900;
 }
 
