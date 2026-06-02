@@ -226,8 +226,9 @@
           <h2>Figures from the scheduler bug study.</h2>
           <p>
             These figures summarize the paper's characterization results: where scheduler bugs
-            come from, how visible they are, how fixes are validated, and how kSTEP enables
-            deterministic exploration.
+            come from, how visible they are, and how fixes are validated. Together they show
+            why scheduler bugs need controlled, deterministic tests rather than benchmark-only
+            validation.
           </p>
         </div>
 
@@ -235,26 +236,22 @@
           <a href="assets/figures/root_cause_consequence.svg" class="figure-card">
             <img src="assets/figures/root_cause_consequence.svg" alt="Root cause and consequence summary">
             <span>Root causes and consequences</span>
+            <p>Semantic state and logic faults dominate, while many consequences remain hard to observe externally.</p>
           </a>
           <a href="assets/figures/consequence_bar_percentage.svg" class="figure-card">
             <img src="assets/figures/consequence_bar_percentage.svg" alt="Bug consequence percentages">
             <span>Bug observability</span>
+            <p>Most scheduler bugs do not leave clear warnings or logs, especially policy misalignments.</p>
           </a>
           <a href="assets/figures/functionality_policy.svg" class="figure-card">
             <img src="assets/figures/functionality_policy.svg" alt="Functionality and policy bug categories">
             <span>Functionality vs. policy</span>
+            <p>The study separates strict correctness failures from policy compromises such as fairness and balance.</p>
           </a>
           <a href="assets/figures/test_methods.svg" class="figure-card">
             <img src="assets/figures/test_methods.svg" alt="How scheduler bugs are discovered and tested">
             <span>Discovery and validation</span>
-          </a>
-          <a href="assets/figures/fuzz.svg" class="figure-card wide">
-            <img src="assets/figures/fuzz.svg" alt="kSTEP fuzzing architecture">
-            <span>Fuzzer architecture</span>
-          </a>
-          <a href="assets/figures/even_idle_cpu.svg" class="figure-card wide">
-            <img src="assets/figures/even_idle_cpu.svg" alt="Scheduler trace for an idle CPU balancing bug">
-            <span>New bug trace</span>
+            <p>Current practice often relies on review or workload symptoms instead of concise regression tests.</p>
           </a>
         </div>
       </section>
