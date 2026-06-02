@@ -240,6 +240,17 @@ h3 {
   background: rgba(255, 255, 255, 0.12);
 }
 
+.button.placeholder {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.button.placeholder:hover {
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.08);
+  transform: none;
+}
+
 .button.dark {
   white-space: nowrap;
 }
@@ -330,7 +341,8 @@ h3 {
 .finding-card,
 .capability-grid article,
 .case-grid article,
-.resource-links a {
+.resource-links a,
+.resource-placeholder {
   border: 1px solid var(--border);
   background: var(--panel);
   box-shadow: 0 20px 70px rgba(0, 0, 0, 0.18);
@@ -384,6 +396,13 @@ h3 {
 
 .paper-panel p {
   margin-bottom: 0;
+}
+
+.paper-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: flex-end;
 }
 
 .section {
@@ -565,6 +584,61 @@ h3 {
   grid-column: span 2;
 }
 
+.results-section {
+  padding-top: 34px;
+}
+
+.result-gallery {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.result-card {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.16);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease;
+}
+
+.result-card:hover {
+  border-color: rgba(82, 240, 219, 0.42);
+  transform: translateY(-3px);
+}
+
+.result-card img {
+  width: 100%;
+  height: 250px;
+  object-fit: contain;
+  padding: 14px;
+  background: #f8fbff;
+}
+
+.result-card span,
+.result-card strong {
+  display: block;
+  padding-inline: 18px;
+}
+
+.result-card span {
+  padding-top: 16px;
+  color: var(--cyan);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.result-card strong {
+  padding-top: 4px;
+  padding-bottom: 18px;
+  color: var(--muted-strong);
+  font-size: 1.04rem;
+}
+
 .resources {
   display: grid;
   grid-template-columns: 0.9fr 1.1fr;
@@ -584,7 +658,8 @@ h3 {
   gap: 14px;
 }
 
-.resource-links a {
+.resource-links a,
+.resource-placeholder {
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -603,9 +678,14 @@ h3 {
   transform: translateX(4px);
 }
 
-.resource-links strong {
+.resource-links strong,
+.resource-placeholder strong {
   margin-bottom: 6px;
   font-size: 1.08rem;
+}
+
+.resource-placeholder {
+  opacity: 0.72;
 }
 
 .footer {
@@ -643,7 +723,8 @@ h3 {
 
   .metric-strip,
   .finding-grid,
-  .case-grid {
+  .case-grid,
+  .result-gallery {
     grid-template-columns: repeat(2, 1fr);
   }
 
@@ -686,7 +767,8 @@ h3 {
   .finding-grid,
   .capability-grid,
   .case-grid,
-  .figure-gallery {
+  .figure-gallery,
+  .result-gallery {
     grid-template-columns: 1fr;
   }
 
