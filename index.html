@@ -23,7 +23,7 @@
           <a href="#study">Study</a>
           <a href="#platform">Platform</a>
           <a href="#evaluation">Evaluation</a>
-          <a href="#results">Results</a>
+          <a href="#figures">Figures</a>
           <a href="#resources">Resources</a>
         </div>
       </nav>
@@ -220,10 +220,15 @@
         </div>
       </section>
 
-      <section class="section gallery-section">
+      <section class="section gallery-section" id="figures">
         <div class="section-heading">
-          <p class="eyebrow">Figures</p>
-          <h2>Visual evidence from the paper.</h2>
+          <p class="eyebrow">Study results</p>
+          <h2>Figures from the scheduler bug study.</h2>
+          <p>
+            These figures summarize the paper's characterization results: where scheduler bugs
+            come from, how visible they are, how fixes are validated, and how kSTEP enables
+            deterministic exploration.
+          </p>
         </div>
 
         <div class="figure-gallery">
@@ -256,159 +261,197 @@
 
       <section class="section results-section" id="results">
         <div class="section-heading">
-          <p class="eyebrow">README results</p>
-          <h2>Buggy-vs-fixed traces from the kSTEP reproducers.</h2>
+          <p class="eyebrow">Reproduced bugs</p>
+          <h2>Buggy-vs-fixed traces from kSTEP drivers.</h2>
           <p>
-            The project README tracks the latest plots for each reproducer. These figures come
-            from the published kSTEP results repository and complement the study figures above
-            with concrete driver outputs.
+            Each reproducer plot links to the rendered trace. The card links point to the driver
+            source and the raw buggy and fixed kSTEP outputs used to generate the figure.
           </p>
         </div>
 
         <div class="result-gallery">
-          <a
-            class="result-card"
-            href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_sync_wakeup/plot.png"
-          >
-            <img
-              src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_sync_wakeup/plot.png"
-              alt="Sync wakeup buggy and fixed scheduler trace"
-            >
-            <span>sync_wakeup.c</span>
-            <strong>Sync wakeup locality</strong>
-          </a>
-          <a
-            class="result-card"
-            href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_vruntime_overflow/plot.png"
-          >
-            <img
-              src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_vruntime_overflow/plot.png"
-              alt="Vruntime overflow buggy and fixed scheduler trace"
-            >
-            <span>vruntime_overflow.c</span>
-            <strong>Cgroup vruntime overflow</strong>
-          </a>
-          <a
-            class="result-card"
-            href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_freeze/plot.png"
-          >
-            <img
-              src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_freeze/plot.png"
-              alt="Freeze reproducer buggy and fixed scheduler trace"
-            >
-            <span>freeze.c</span>
-            <strong>Delayed-dequeue freezer</strong>
-          </a>
-          <a
-            class="result-card"
-            href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_extra_balance/plot.png"
-          >
-            <img
-              src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_extra_balance/plot.png"
-              alt="Extra balance buggy and fixed scheduler trace"
-            >
-            <span>extra_balance.c</span>
-            <strong>Extra load balancing</strong>
-          </a>
-          <a
-            class="result-card"
-            href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_util_avg/plot.png"
-          >
-            <img
-              src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_util_avg/plot.png"
-              alt="Utilization average buggy and fixed scheduler trace"
-            >
-            <span>util_avg.c</span>
-            <strong>RT util_avg drop</strong>
-          </a>
-          <a
-            class="result-card"
-            href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_long_balance/plot.png"
-          >
-            <img
-              src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_long_balance/plot.png"
-              alt="Long balance buggy and fixed scheduler trace"
-            >
-            <span>long_balance.c</span>
-            <strong>Long balance scan</strong>
-          </a>
-          <a
-            class="result-card"
-            href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_lag_vruntime/plot.png"
-          >
-            <img
-              src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_lag_vruntime/plot.png"
-              alt="Lag vruntime buggy and fixed scheduler trace"
-            >
-            <span>lag_vruntime.c</span>
-            <strong>Lag vruntime reweight</strong>
-          </a>
-          <a
-            class="result-card"
-            href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_even_idle_cpu/plot.png"
-          >
-            <img
-              src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_even_idle_cpu/plot.png"
-              alt="Even idle CPU buggy and fixed scheduler trace"
-            >
-            <span>even_idle_cpu.c</span>
-            <strong>Even idle CPU</strong>
-          </a>
-          <a
-            class="result-card"
-            href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_local_group_imbalance/plot.png"
-          >
-            <img
-              src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_local_group_imbalance/plot.png"
-              alt="Local group imbalance buggy and fixed scheduler trace"
-            >
-            <span>local_group_imbalance.c</span>
-            <strong>Local group imbalance</strong>
-          </a>
-          <a
-            class="result-card"
-            href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_util_avg_jump/plot.png"
-          >
-            <img
-              src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_util_avg_jump/plot.png"
-              alt="Utilization average jump buggy and fixed scheduler trace"
-            >
-            <span>util_avg_jump.c</span>
-            <strong>Util avg jump</strong>
-          </a>
-          <a
-            class="result-card"
-            href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_rt_runtime_toggle/plot.png"
-          >
-            <img
-              src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_rt_runtime_toggle/plot.png"
-              alt="RT runtime toggle buggy and fixed scheduler trace"
-            >
-            <span>rt_runtime_toggle.c</span>
-            <strong>RT runtime toggle</strong>
-          </a>
-          <a
-            class="result-card"
-            href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_uclamp_inversion/plot.png"
-          >
-            <img
-              src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_uclamp_inversion/plot.png"
-              alt="uclamp inversion buggy and fixed scheduler trace"
-            >
-            <span>uclamp_inversion.c</span>
-            <strong>uclamp inversion</strong>
-          </a>
-          <a
-            class="result-card"
-            href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_h_nr_runnable/plot.png"
-          >
-            <img
-              src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_h_nr_runnable/plot.png"
-              alt="h_nr_runnable buggy and fixed scheduler trace"
-            >
-            <span>h_nr_runnable.c</span>
-            <strong>h_nr_runnable accounting</strong>
-          </a>
+          <article class="result-card">
+            <a class="result-plot" href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_sync_wakeup/plot.png">
+              <img src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_sync_wakeup/plot.png" alt="Sync wakeup buggy and fixed scheduler trace">
+            </a>
+            <div class="result-card-body">
+              <span>sync_wakeup.c</span>
+              <strong>Sync wakeup locality</strong>
+              <div class="result-links" aria-label="sync_wakeup resources">
+                <a href="https://github.com/kstep-dev/kstep/blob/master/kmod/drivers/sync_wakeup.c">Driver</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_sync_wakeup/buggy/kstep.jsonl">Buggy output</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_sync_wakeup/fixed/kstep.jsonl">Fixed output</a>
+              </div>
+            </div>
+          </article>
+          <article class="result-card">
+            <a class="result-plot" href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_vruntime_overflow/plot.png">
+              <img src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_vruntime_overflow/plot.png" alt="Vruntime overflow buggy and fixed scheduler trace">
+            </a>
+            <div class="result-card-body">
+              <span>vruntime_overflow.c</span>
+              <strong>Cgroup vruntime overflow</strong>
+              <div class="result-links" aria-label="vruntime_overflow resources">
+                <a href="https://github.com/kstep-dev/kstep/blob/master/kmod/drivers/vruntime_overflow.c">Driver</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_vruntime_overflow/buggy/kstep.jsonl">Buggy output</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_vruntime_overflow/fixed/kstep.jsonl">Fixed output</a>
+              </div>
+            </div>
+          </article>
+          <article class="result-card">
+            <a class="result-plot" href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_freeze/plot.png">
+              <img src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_freeze/plot.png" alt="Freeze reproducer buggy and fixed scheduler trace">
+            </a>
+            <div class="result-card-body">
+              <span>freeze.c</span>
+              <strong>Delayed-dequeue freezer</strong>
+              <div class="result-links" aria-label="freeze resources">
+                <a href="https://github.com/kstep-dev/kstep/blob/master/kmod/drivers/freeze.c">Driver</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_freeze/buggy/kstep.jsonl">Buggy output</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_freeze/fixed/kstep.jsonl">Fixed output</a>
+              </div>
+            </div>
+          </article>
+          <article class="result-card">
+            <a class="result-plot" href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_extra_balance/plot.png">
+              <img src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_extra_balance/plot.png" alt="Extra balance buggy and fixed scheduler trace">
+            </a>
+            <div class="result-card-body">
+              <span>extra_balance.c</span>
+              <strong>Extra load balancing</strong>
+              <div class="result-links" aria-label="extra_balance resources">
+                <a href="https://github.com/kstep-dev/kstep/blob/master/kmod/drivers/extra_balance.c">Driver</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_extra_balance/buggy/kstep.jsonl">Buggy output</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_extra_balance/fixed/kstep.jsonl">Fixed output</a>
+              </div>
+            </div>
+          </article>
+          <article class="result-card">
+            <a class="result-plot" href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_util_avg/plot.png">
+              <img src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_util_avg/plot.png" alt="Utilization average buggy and fixed scheduler trace">
+            </a>
+            <div class="result-card-body">
+              <span>util_avg.c</span>
+              <strong>RT util_avg drop</strong>
+              <div class="result-links" aria-label="util_avg resources">
+                <a href="https://github.com/kstep-dev/kstep/blob/master/kmod/drivers/util_avg.c">Driver</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_util_avg/buggy/kstep.jsonl">Buggy output</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_util_avg/fixed/kstep.jsonl">Fixed output</a>
+              </div>
+            </div>
+          </article>
+          <article class="result-card">
+            <a class="result-plot" href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_long_balance/plot.png">
+              <img src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_long_balance/plot.png" alt="Long balance buggy and fixed scheduler trace">
+            </a>
+            <div class="result-card-body">
+              <span>long_balance.c</span>
+              <strong>Long balance scan</strong>
+              <div class="result-links" aria-label="long_balance resources">
+                <a href="https://github.com/kstep-dev/kstep/blob/master/kmod/drivers/long_balance.c">Driver</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_long_balance/buggy/kstep.jsonl">Buggy output</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_long_balance/fixed/kstep.jsonl">Fixed output</a>
+              </div>
+            </div>
+          </article>
+          <article class="result-card">
+            <a class="result-plot" href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_lag_vruntime/plot.png">
+              <img src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_lag_vruntime/plot.png" alt="Lag vruntime buggy and fixed scheduler trace">
+            </a>
+            <div class="result-card-body">
+              <span>lag_vruntime.c</span>
+              <strong>Lag vruntime reweight</strong>
+              <div class="result-links" aria-label="lag_vruntime resources">
+                <a href="https://github.com/kstep-dev/kstep/blob/master/kmod/drivers/lag_vruntime.c">Driver</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_lag_vruntime/buggy/kstep.jsonl">Buggy output</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_lag_vruntime/fixed/kstep.jsonl">Fixed output</a>
+              </div>
+            </div>
+          </article>
+          <article class="result-card">
+            <a class="result-plot" href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_even_idle_cpu/plot.png">
+              <img src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_even_idle_cpu/plot.png" alt="Even idle CPU buggy and fixed scheduler trace">
+            </a>
+            <div class="result-card-body">
+              <span>even_idle_cpu.c</span>
+              <strong>Even idle CPU</strong>
+              <div class="result-links" aria-label="even_idle_cpu resources">
+                <a href="https://github.com/kstep-dev/kstep/blob/master/kmod/drivers_new_bugs/even_idle_cpu.c">Driver</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_even_idle_cpu/buggy/kstep.jsonl">Buggy output</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_even_idle_cpu/fixed/kstep.jsonl">Fixed output</a>
+              </div>
+            </div>
+          </article>
+          <article class="result-card">
+            <a class="result-plot" href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_local_group_imbalance/plot.png">
+              <img src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_local_group_imbalance/plot.png" alt="Local group imbalance buggy and fixed scheduler trace">
+            </a>
+            <div class="result-card-body">
+              <span>local_group_imbalance.c</span>
+              <strong>Local group imbalance</strong>
+              <div class="result-links" aria-label="local_group_imbalance resources">
+                <a href="https://github.com/kstep-dev/kstep/blob/master/kmod/drivers_new_bugs/local_group_imbalance.c">Driver</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_local_group_imbalance/buggy/kstep.jsonl">Buggy output</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_local_group_imbalance/fixed/kstep.jsonl">Fixed output</a>
+              </div>
+            </div>
+          </article>
+          <article class="result-card">
+            <a class="result-plot" href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_util_avg_jump/plot.png">
+              <img src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_util_avg_jump/plot.png" alt="Utilization average jump buggy and fixed scheduler trace">
+            </a>
+            <div class="result-card-body">
+              <span>util_avg_jump.c</span>
+              <strong>Util avg jump</strong>
+              <div class="result-links" aria-label="util_avg_jump resources">
+                <a href="https://github.com/kstep-dev/kstep/blob/master/kmod/drivers_new_bugs/util_avg_jump.c">Driver</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_util_avg_jump/buggy/kstep.jsonl">Buggy output</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_util_avg_jump/fixed/kstep.jsonl">Fixed output</a>
+              </div>
+            </div>
+          </article>
+          <article class="result-card">
+            <a class="result-plot" href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_rt_runtime_toggle/plot.png">
+              <img src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_rt_runtime_toggle/plot.png" alt="RT runtime toggle buggy and fixed scheduler trace">
+            </a>
+            <div class="result-card-body">
+              <span>rt_runtime_toggle.c</span>
+              <strong>RT runtime toggle</strong>
+              <div class="result-links" aria-label="rt_runtime_toggle resources">
+                <a href="https://github.com/kstep-dev/kstep/blob/master/kmod/drivers/rt_runtime_toggle.c">Driver</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_rt_runtime_toggle/buggy/kstep.jsonl">Buggy output</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_rt_runtime_toggle/fixed/kstep.jsonl">Fixed output</a>
+              </div>
+            </div>
+          </article>
+          <article class="result-card">
+            <a class="result-plot" href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_uclamp_inversion/plot.png">
+              <img src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_uclamp_inversion/plot.png" alt="uclamp inversion buggy and fixed scheduler trace">
+            </a>
+            <div class="result-card-body">
+              <span>uclamp_inversion.c</span>
+              <strong>uclamp inversion</strong>
+              <div class="result-links" aria-label="uclamp_inversion resources">
+                <a href="https://github.com/kstep-dev/kstep/blob/master/kmod/drivers/uclamp_inversion.c">Driver</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_uclamp_inversion/buggy/kstep.jsonl">Buggy output</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_uclamp_inversion/fixed/kstep.jsonl">Fixed output</a>
+              </div>
+            </div>
+          </article>
+          <article class="result-card">
+            <a class="result-plot" href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_h_nr_runnable/plot.png">
+              <img src="https://raw.githubusercontent.com/kstep-dev/results/main/repro_h_nr_runnable/plot.png" alt="h_nr_runnable buggy and fixed scheduler trace">
+            </a>
+            <div class="result-card-body">
+              <span>h_nr_runnable.c</span>
+              <strong>h_nr_runnable accounting</strong>
+              <div class="result-links" aria-label="h_nr_runnable resources">
+                <a href="https://github.com/kstep-dev/kstep/blob/master/kmod/drivers/h_nr_runnable.c">Driver</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_h_nr_runnable/buggy/kstep.jsonl">Buggy output</a>
+                <a href="https://raw.githubusercontent.com/kstep-dev/results/main/repro_h_nr_runnable/fixed/kstep.jsonl">Fixed output</a>
+              </div>
+            </div>
+          </article>
         </div>
       </section>
 
