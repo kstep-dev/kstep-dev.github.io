@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="kSTEP is a deterministic, controlled testing platform for Linux CPU scheduler bugs."
+    >
+    <title>kSTEP: Deterministic Linux Scheduler Testing</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="page-glow page-glow-one"></div>
+    <div class="page-glow page-glow-two"></div>
+
+    <header class="hero" id="top">
+      <nav class="nav" aria-label="Primary navigation">
+        <a class="brand" href="#top" aria-label="kSTEP home">
+          <span class="brand-mark">k</span>STEP
+        </a>
+        <div class="nav-links">
+          <a href="#study">Study</a>
+          <a href="#platform">Platform</a>
+          <a href="#evaluation">Evaluation</a>
+          <a href="#resources">Resources</a>
+        </div>
+      </nav>
+
+      <section class="hero-grid">
+        <div class="hero-copy">
+          <p class="eyebrow">Kernel Scheduler Test and Evaluation Platform</p>
+          <h1>Deterministic tests for bugs hiding inside the Linux CPU scheduler.</h1>
+          <p class="hero-text">
+            kSTEP gives researchers and kernel developers precise control over scheduler-invoking
+            events, isolated CPUs, mocked time, and repeatable traces so subtle scheduler behavior
+            can be triggered, observed, and compared without benchmark noise.
+          </p>
+          <div class="hero-actions" aria-label="Project links">
+            <a class="button primary" href="https://github.com/kstep-dev/kstep">View kSTEP on GitHub</a>
+            <a class="button secondary" href="assets/downloads/kSTEP-paper-source.zip">Download paper source</a>
+          </div>
+        </div>
+
+        <aside class="trace-card" aria-label="kSTEP execution flow">
+          <div class="trace-header">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <ol class="trace-flow">
+            <li>
+              <strong>Driver program</strong>
+              <span>Declares event sequence</span>
+            </li>
+            <li>
+              <strong>Control module</strong>
+              <span>Dispatches scheduler events</span>
+            </li>
+            <li>
+              <strong>Isolated CPUs</strong>
+              <span>Run unmodified scheduler code</span>
+            </li>
+            <li>
+              <strong>Noise-free trace</strong>
+              <span>Replays exactly across runs</span>
+            </li>
+          </ol>
+        </aside>
+      </section>
+
+      <section class="metric-strip" aria-label="Highlights">
+        <article>
+          <span>232</span>
+          <p>scheduler bug-fix commits studied since 2020</p>
+        </article>
+        <article>
+          <span>73%</span>
+          <p>silent functional faults or policy misalignments</p>
+        </article>
+        <article>
+          <span>7 + 4</span>
+          <p>real-world bugs reproduced and new bugs uncovered</p>
+        </article>
+        <article>
+          <span>0 noise</span>
+          <p>stable traces for side-by-side kernel comparisons</p>
+        </article>
+      </section>
+    </header>
+
+    <main>
+      <section class="paper-panel">
+        <div>
+          <p class="eyebrow">Paper</p>
+          <h2>kSTEP: Characterization and Deterministic Testing of Linux CPU Scheduler Bugs</h2>
+          <p>
+            Tingjia Cao, Shawn (Wanxiang) Zhong, Caeden Whitaker, Ke Han,
+            Andrea C. Arpaci-Dusseau, and Remzi H. Arpaci-Dusseau.
+          </p>
+        </div>
+        <a class="button secondary dark" href="https://github.com/kstep-dev/study">Open the study repository</a>
+      </section>
+
+      <section class="section" id="study">
+        <div class="section-heading">
+          <p class="eyebrow">Bug study</p>
+          <h2>Scheduler bugs matter, but they are hard to see.</h2>
+          <p>
+            The study separates functionality bugs from policy bugs: failures where Linux keeps
+            running, but scheduler behavior quietly drifts from intended goals such as balance,
+            fairness, locality, and energy efficiency.
+          </p>
+        </div>
+
+        <div class="finding-grid">
+          <article class="finding-card accent-red">
+            <span>15%</span>
+            <h3>Fatal failures</h3>
+            <p>Crashes, oopses, hard lockups, or hangs are visible, but they are only part of the story.</p>
+          </article>
+          <article class="finding-card accent-amber">
+            <span>73%</span>
+            <h3>No warnings</h3>
+            <p>Most bugs leave no useful panic, warning, or default trace of the triggering event sequence.</p>
+          </article>
+          <article class="finding-card accent-violet">
+            <span>75%</span>
+            <h3>Semantic root causes</h3>
+            <p>Wrong state updates and logic faults dominate, demanding scheduler-specific understanding.</p>
+          </article>
+          <article class="finding-card accent-blue">
+            <span>45%</span>
+            <h3>Hidden for years</h3>
+            <p>Many fixes land only after long exposure in mainline, with some bugs surviving over a decade.</p>
+          </article>
+          <article class="finding-card accent-green">
+            <span>54%</span>
+            <h3>Attribute-sensitive</h3>
+            <p>Task, cgroup, and system-level scheduler attributes form a large input space for testing.</p>
+          </article>
+          <article class="finding-card accent-cyan">
+            <span>28%</span>
+            <h3>Beyond userspace</h3>
+            <p>Kernel events and special hardware topologies are often required to trigger real bugs.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section split" id="platform">
+        <div class="section-heading">
+          <p class="eyebrow">Platform</p>
+          <h2>Controlled execution without inventing fake scheduler states.</h2>
+          <p>
+            kSTEP runs driver programs in kernel space and dispatches normal scheduler-invoking
+            events into an isolated environment. The scheduler remains unmodified; tests guide it
+            into target states through realistic code paths.
+          </p>
+        </div>
+
+        <div class="architecture-card">
+          <img src="assets/figures/arch.svg" alt="Architecture diagram of kSTEP">
+        </div>
+
+        <div class="capability-grid">
+          <article>
+            <span>01</span>
+            <h3>Precise timing</h3>
+            <p>Explicit ticks advance logical time and place events inside narrow transient windows.</p>
+          </article>
+          <article>
+            <span>02</span>
+            <h3>Rich control</h3>
+            <p>Drivers can orchestrate tasks, cgroups, kernel activities, CPU frequency, and topology.</p>
+          </article>
+          <article>
+            <span>03</span>
+            <h3>Deterministic traces</h3>
+            <p>Mocked clocks, isolated CPUs, and reset state make the same input produce the same trace.</p>
+          </article>
+          <article>
+            <span>04</span>
+            <h3>High fidelity</h3>
+            <p>kSTEP avoids direct scheduler-state mutation, preserving behavior reachable on real systems.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section dark-section" id="evaluation">
+        <div class="section-heading">
+          <p class="eyebrow">Evaluation</p>
+          <h2>Short drivers expose bugs that benchmarks struggle to reproduce.</h2>
+          <p>
+            Case-study reproducers use compact event sequences to trigger scheduler failures,
+            then compare buggy and fixed kernels with deterministic traces.
+          </p>
+        </div>
+
+        <div class="case-grid">
+          <article>
+            <h3>Sync wakeup locality</h3>
+            <p>A wakee selects a remote CPU despite the waker CPU becoming idle, causing an initial slowdown.</p>
+          </article>
+          <article>
+            <h3>Cgroup vruntime overflow</h3>
+            <p>A transient hierarchy state can inflate vruntime and starve a task almost indefinitely.</p>
+          </article>
+          <article>
+            <h3>Load-balancing waste</h3>
+            <p>Topology-sensitive bugs make CPUs rebalance redundantly or stay idle with runnable work.</p>
+          </article>
+          <article>
+            <h3>Utilization misaccounting</h3>
+            <p>Bad accounting after sleep can delay CPU frequency ramp-up for latency-sensitive tasks.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section gallery-section">
+        <div class="section-heading">
+          <p class="eyebrow">Figures</p>
+          <h2>Visual evidence from the paper.</h2>
+        </div>
+
+        <div class="figure-gallery">
+          <a href="assets/figures/root_cause_consequence.svg" class="figure-card">
+            <img src="assets/figures/root_cause_consequence.svg" alt="Root cause and consequence summary">
+            <span>Root causes and consequences</span>
+          </a>
+          <a href="assets/figures/consequence_bar_percentage.svg" class="figure-card">
+            <img src="assets/figures/consequence_bar_percentage.svg" alt="Bug consequence percentages">
+            <span>Bug observability</span>
+          </a>
+          <a href="assets/figures/functionality_policy.svg" class="figure-card">
+            <img src="assets/figures/functionality_policy.svg" alt="Functionality and policy bug categories">
+            <span>Functionality vs. policy</span>
+          </a>
+          <a href="assets/figures/test_methods.svg" class="figure-card">
+            <img src="assets/figures/test_methods.svg" alt="How scheduler bugs are discovered and tested">
+            <span>Discovery and validation</span>
+          </a>
+          <a href="assets/figures/fuzz.svg" class="figure-card wide">
+            <img src="assets/figures/fuzz.svg" alt="kSTEP fuzzing architecture">
+            <span>Fuzzer architecture</span>
+          </a>
+          <a href="assets/figures/even_idle_cpu.svg" class="figure-card wide">
+            <img src="assets/figures/even_idle_cpu.svg" alt="Scheduler trace for an idle CPU balancing bug">
+            <span>New bug trace</span>
+          </a>
+        </div>
+      </section>
+
+      <section class="section resources" id="resources">
+        <div class="resource-copy">
+          <p class="eyebrow">Resources</p>
+          <h2>Build on deterministic scheduler execution.</h2>
+          <p>
+            kSTEP can support reproducible debugging, regression tests, policy evaluation,
+            anomaly detection, fuzzing, and agent-driven scheduler test generation.
+          </p>
+        </div>
+        <div class="resource-links">
+          <a href="https://github.com/kstep-dev/kstep">
+            <strong>kSTEP code</strong>
+            <span>Framework, drivers, and automation scripts</span>
+          </a>
+          <a href="https://github.com/kstep-dev/study">
+            <strong>Bug study</strong>
+            <span>Dataset and analysis artifacts</span>
+          </a>
+          <a href="assets/downloads/kSTEP-paper-source.zip">
+            <strong>Paper source</strong>
+            <span>LaTeX source and figures used for this page</span>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>kSTEP is publicly available at <a href="https://github.com/kstep-dev/kstep">github.com/kstep-dev/kstep</a>.</p>
+      <a href="#top">Back to top</a>
+    </footer>
+  </body>
+</html>
