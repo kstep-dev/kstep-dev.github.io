@@ -55,7 +55,7 @@ Everything generated lives under `build/` (gitignored). kSTEP images come from
 
 `deploy.sh` writes `kernels.json` from the images committed in the build repo
 plus `num_cpus`/`mem_mb` parsed out of `reproduce.py`, and points `base` at
-`raw.githubusercontent.com/kstep-dev/build/<branch>`; the browser fetches the
+`raw.githubusercontent.com/kstep-dev/build/<commit pinned by kSTEP's build submodule>`; the browser fetches the
 kernel and initramfs from there at run time. It pushes `build/site` as an
 orphan `gh-pages` branch, so no history accumulates. The service worker
 installs on first load and reloads the page once so SharedArrayBuffer becomes

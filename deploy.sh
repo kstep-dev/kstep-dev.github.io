@@ -2,7 +2,8 @@
 # Stage the static site in build/site and (unless --stage-only) force-push it to
 # the gh-pages branch; history is not kept there.
 #   ./deploy.sh                 # stage + push. Kernels are fetched by the browser from the
-#                               # kstep-dev/build repo on GitHub, so the site holds no images.
+#                               # kstep-dev/build repo on GitHub at the commit the kSTEP submodule
+#                               # pins, so the site holds no images.
 #   ./deploy.sh --stage-only    # stage only, with the local $KSTEP_DIR/build images copied in
 #                               # (what serve.sh uses)
 # Site: index.html, coi-serviceworker.min.js, kernels.json, qemu/{qemu-system-x86_64.js,.wasm,*.bin}
@@ -26,7 +27,7 @@ touch "$site/.nojekyll"
 # kernels.json: where to fetch images from, plus per-kernel defaults from reproduce.py.
 if [ $push -eq 1 ]; then
   url=$(git -C "$KSTEP_DIR/build" remote get-url origin | sed -E 's#\.git$##; s#^git@github.com:#https://github.com/#')
-  base="${url/github.com/raw.githubusercontent.com}/$(git -C "$KSTEP_DIR/build" rev-parse --abbrev-ref HEAD)"
+  base="${url/github.com/raw.githubusercontent.com}/$(git -C "$KSTEP_DIR/build" rev-parse HEAD)"   # exact commit kSTEP pins
   list=$(git -C "$KSTEP_DIR/build" ls-files | sed -n 's#^\([^/]*\)/kernel$#\1#p')   # committed images only
 else
   base=images
