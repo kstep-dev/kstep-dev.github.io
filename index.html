@@ -44,13 +44,15 @@
     <a id="dl-cov" hidden download="kstep.cov">kstep.cov</a>
   </footer>
 </main>
+<!-- GitHub Pages cannot set COOP/COEP headers; this service worker adds them on reload. -->
+<script src="coi-serviceworker.min.js"></script>
 <script type="module">
 const $ = (id) => document.getElementById(id);
 const con = $('console'), status = $('status'), warn = $('warn');
 
 // Preconditions: SharedArrayBuffer (COOP/COEP headers) and Memory64.
 if (typeof SharedArrayBuffer === 'undefined')
-  warn.textContent = 'SharedArrayBuffer unavailable: serve via serve.py so COOP/COEP headers are set.';
+  warn.textContent = 'SharedArrayBuffer unavailable: the page needs COOP/COEP headers (serve.py sets them; on static hosting the service worker adds them after one reload).';
 // Minimal module with one 64-bit memory (limits flag 0x04 = memory64).
 const mem64 = new Uint8Array([0,0x61,0x73,0x6d, 1,0,0,0, 5,3,1,4,1]);
 if (!WebAssembly.validate(mem64))
@@ -58,7 +60,7 @@ if (!WebAssembly.validate(mem64))
 
 // Kernel list from the server.
 try {
-  const ks = await (await fetch('/kernels.json')).json();
+  const ks = await (await fetch('kernels.json')).json();
   $('kernel').replaceChildren(...ks.map(k => new Option(k, k)));
   if (!ks.length) warn.textContent = 'No kernels found under build/. Run `make KERNEL=<name>` in the kstep root.';
 } catch (e) { warn.textContent = 'kernels.json failed: ' + e.message; }
@@ -77,15 +79,15 @@ $('run').onclick = async () => {
   try {
     setStatus('fetching images');
     const [kimg, rootfs, { default: Module }] = await Promise.all([
-      fetch(`/images/${kernel}/kernel`).then(r => r.arrayBuffer()),
-      fetch(`/images/${kernel}/rootfs.cpio`).then(r => r.arrayBuffer()),
-      import('/qemu/qemu-system-aarch64.js'),
+      fetch(`images/${kernel}/kernel`).then(r => r.arrayBuffer()),
+      fetch(`images/${kernel}/rootfs.cpio`).then(r => r.arrayBuffer()),
+      import('./qemu/qemu-system-aarch64.js'),
     ]);
     const isol = smp > 2 ? `1-${smp - 1}` : '1';
     const boot = `rw nokaslr loglevel=7 sched_verbose isolcpus=nohz,managed_irq,${isol} irqaffinity=0 rcu_nocbs=${isol} nohz_full=${isol} init=/user panic=-1 console=ttyS0 -- driver=${driver}`;
     setStatus('starting qemu');
     const mod = await Module({
-      locateFile: (f) => '/qemu/' + f,
+      locateFile: (f) => 'qemu/' + f,
       arguments: [
         '-machine', 'virt', '-cpu', 'cortex-a57', '-smp', String(smp), '-m', '512M',
         '-accel', 'tcg,tb-size=500,thread=multi',

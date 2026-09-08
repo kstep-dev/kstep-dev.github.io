@@ -4,10 +4,11 @@
     ./serve.py [--port 8080]
 
 Routes:
-  /                     index.html
-  /qemu/<file>          build/qemu/build/   (qemu-system-aarch64.js/.wasm)
-  /images/<kernel>/<f>  $KSTEP_DIR/build/<kernel>/  (kernel, rootfs.cpio; KSTEP_DIR defaults to ../kstep)
-  /kernels.json         list of kernel dirs that have kernel + rootfs.cpio
+  /                        index.html, coi-serviceworker.min.js
+  /qemu/<file>             build/qemu/build/   (qemu-system-aarch64.js/.wasm)
+  /images/<kernel>/<f>     $KSTEP_DIR/build/<kernel>/  (kernel, rootfs.cpio)
+  /kernels.json            kernel dirs that have kernel + rootfs.cpio
+Same layout deploy.sh produces for GitHub Pages, so the page works in both.
 
 Adds Cross-Origin-Opener-Policy / Cross-Origin-Embedder-Policy headers, which
 browsers require before they expose SharedArrayBuffer (needed for pthreads).
@@ -16,7 +17,8 @@ import argparse, json, mimetypes, os, sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 W = os.path.dirname(os.path.abspath(__file__))
-KSTEP_BUILD = os.path.join(os.environ.get("KSTEP_DIR", os.path.join(W, "..", "kstep")), "build")
+KSTEP_DIR = os.environ.get("KSTEP_DIR") or (os.path.join(W, "..", "..") if os.path.isfile(os.path.join(W, "..", "..", "run.py")) else os.path.join(W, "..", "kstep"))
+KSTEP_BUILD = os.path.join(KSTEP_DIR, "build")
 mimetypes.add_type("application/wasm", ".wasm")
 mimetypes.add_type("text/javascript", ".js")
 
@@ -50,6 +52,8 @@ class Handler(SimpleHTTPRequestHandler):
             if kernel in kernels() and name in ("kernel", "rootfs.cpio"):
                 return os.path.join(KSTEP_BUILD, kernel, name)
             return os.path.join(W, "nonexistent")
+        if path == "/coi-serviceworker.min.js":
+            return os.path.join(W, "coi-serviceworker.min.js")
         return os.path.join(W, "nonexistent")
 
     def do_GET(self):

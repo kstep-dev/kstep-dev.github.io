@@ -1,7 +1,12 @@
 # Shared environment for build.sh / run.mjs / serve.py. Source it from bash:
 #   source env.sh
 W=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-export KSTEP_DIR="${KSTEP_DIR:-$W/../kstep}"          # kstep checkout with build/<kernel>/{kernel,rootfs.cpio}
+# kstep checkout with build/<kernel>/{kernel,rootfs.cpio}: ../../ when this repo is
+# the kstep docs/web submodule, else a sibling ../kstep checkout.
+if [ -z "${KSTEP_DIR:-}" ]; then
+  if [ -f "$W/../../run.py" ]; then KSTEP_DIR="$W/../.."; else KSTEP_DIR="$W/../kstep"; fi
+fi
+export KSTEP_DIR
 export QEMU_TAG=v11.1.0                                # release the patches/ apply to
 export EMSDK_VERSION=4.0.23
 source "$W/build/emsdk/emsdk_env.sh" >/dev/null 2>&1 || true

@@ -4,7 +4,7 @@
 //
 // Guest console goes to stdout; runner status goes to stderr. --quiet suppresses the console.
 //
-// Preloads $KSTEP_DIR/build/<kernel>/{kernel,rootfs.cpio} (KSTEP_DIR defaults to ../kstep)
+// Preloads $KSTEP_DIR/build/<kernel>/{kernel,rootfs.cpio} (KSTEP_DIR defaults to ../.. as a kstep submodule, else ../kstep)
 // into Emscripten's in-memory FS,
 // boots the aarch64 virt machine with the same arguments run.py uses, polls the
 // guest console, and copies qemu.log / kstep.jsonl / kstep.cov to --out when the
@@ -20,7 +20,7 @@ const kernel = args.kernel ?? 'v6.14';
 const driver = args.driver ?? 'default';
 const smp = Number(args.smp ?? 2);
 const outDir = args.out ?? path.join(W, 'results', `${kernel}-${driver}`);
-const kdir = path.join(process.env.KSTEP_DIR ?? path.join(W, '..', 'kstep'), 'build', kernel);
+const kdir = path.join(process.env.KSTEP_DIR ?? (fs.existsSync(path.join(W, '..', '..', 'run.py')) ? path.join(W, '..', '..') : path.join(W, '..', 'kstep')), 'build', kernel);
 
 const Module = (await import(path.join(W, 'build', 'qemu', 'build', 'qemu-system-aarch64.js'))).default;
 const isol = smp > 2 ? `1-${smp - 1}` : '1';

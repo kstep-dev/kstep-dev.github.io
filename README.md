@@ -29,10 +29,13 @@ but only with the TCI interpreter, which is about 4x slower for kSTEP.
 | `run.mjs`     | headless runner for Node |
 | `serve.py`    | static server with the COOP/COEP headers browsers need for SharedArrayBuffer |
 | `index.html`  | browser UI: pick kernel, driver, vCPUs; streams the console; downloads results |
+| `coi-serviceworker.min.js` | adds COOP/COEP headers on static hosts such as GitHub Pages (MIT, gzuidhof/coi-serviceworker) |
+| `deploy.sh`   | assembles the site with the wasm build and kernel images and force-pushes it to `gh-pages` |
 
-Everything generated lives under `build/` (gitignored). kSTEP is expected as a
-sibling checkout, `../kstep`, with `build/<kernel>/{kernel,rootfs.cpio}` built
-by `make KERNEL=<kernel>`; set `KSTEP_DIR` to point elsewhere.
+Everything generated lives under `build/` (gitignored). kSTEP images come from
+`$KSTEP_DIR/build/<kernel>/{kernel,rootfs.cpio}` (built by `make KERNEL=<kernel>`).
+`KSTEP_DIR` defaults to `../..` when this repo is checked out as kSTEP's
+`docs/web` submodule, else to a sibling `../kstep` checkout.
 
 ## Usage
 
@@ -45,7 +48,14 @@ $NODE --wasm-lazy-compilation run.mjs --kernel v6.14 --driver default --smp 2
 #   results -> results/<kernel>-<driver>/{qemu.log,kstep.jsonl,kstep.cov}
 
 ./serve.py --port 8080        # then open http://localhost:8080/
+./deploy.sh v6.14             # publish to gh-pages: https://kstep-dev.github.io/web/
 ```
+
+`deploy.sh` takes kernel names (default: every kernel under `$KSTEP_DIR/build`),
+copies the wasm build plus those images into `build/site/`, and force-pushes
+that as an orphan `gh-pages` branch, so no history accumulates there. The site
+needs GitHub Pages set to serve from `gh-pages`. The service worker installs
+on first load and reloads the page once so SharedArrayBuffer becomes available.
 
 vCPUs always run under MTTCG, one host thread each. Browsers need wasm
 Memory64: Chrome 133+ or Firefox 134+ (Safari would need a wasm32 build via
