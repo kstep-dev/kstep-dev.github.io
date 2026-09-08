@@ -19,7 +19,13 @@
   #status { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--mute); }
   #status.ok { color: var(--ok); } #status.bad { color: var(--bad); }
   main { flex: 1; display: grid; grid-template-rows: 1fr auto; min-height: 0; }
-  #console { margin: 0; padding: .75rem 1rem; overflow: auto; background: var(--con); color: var(--confg); font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+  #panes { display: grid; grid-template-columns: 3fr 2fr; min-height: 0; }
+  @media (max-width: 900px) { #panes { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } }
+  .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-left: 1px solid var(--line); }
+  .pane:first-child { border-left: 0; }
+  .pane h2 { margin: 0; padding: .3rem 1rem; font-size: .75rem; font-weight: 600; color: var(--mute); text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; }
+  .pane h2 span { font-weight: 400; text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+  .pane pre { flex: 1; margin: 0; padding: .75rem 1rem; overflow: auto; background: var(--con); color: var(--confg); font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
   footer { display: flex; gap: 1rem; padding: .5rem 1rem; border-top: 1px solid var(--line); font-size: .8rem; color: var(--mute); align-items: center; }
   footer a { color: var(--accent); } footer a[hidden] { display: none; }
   #warn { color: var(--bad); }
@@ -36,7 +42,10 @@
   <span id="status">idle</span>
 </header>
 <main>
-  <pre id="console"></pre>
+  <div id="panes">
+    <div class="pane"><h2>kernel console (qemu.log) <span id="n-console"></span></h2><pre id="console"></pre></div>
+    <div class="pane"><h2>driver output (kstep.jsonl) <span id="n-jsonl"></span></h2><pre id="jsonl"></pre></div>
+  </div>
   <footer>
     <span id="warn"></span>
     <span id="dl">results:</span>
@@ -50,7 +59,7 @@
 <script type="module">
 const V = '__VERSION__';   // replaced by deploy.sh; busts caches of the wasm/js across deploys
 const $ = (id) => document.getElementById(id);
-const con = $('console'), status = $('status'), warn = $('warn');
+const con = $('console'), out = $('jsonl'), status = $('status'), warn = $('warn');
 
 // Preconditions: SharedArrayBuffer (COOP/COEP headers) and Memory64.
 if (typeof SharedArrayBuffer === 'undefined')
@@ -78,7 +87,7 @@ $('run').onclick = async () => {
   if (running) return;
   running = true; $('run').disabled = true;
   for (const id of ['dl-jsonl', 'dl-log', 'dl-cov']) $(id).hidden = true;
-  con.textContent = '';
+  con.textContent = ''; out.textContent = ''; $('n-console').textContent = ''; $('n-jsonl').textContent = '';
   const kernel = $('kernel').value, driver = $('driver').value.trim() || kernel.replace(/_(buggy|fixed)$/, '');
   const smp = Math.max(1, +$('smp').value || 2), mem = Math.max(128, +$('mem').value || 512);
   const t0 = performance.now();
@@ -94,34 +103,43 @@ $('run').onclick = async () => {
     ]);
     const isol = smp > 2 ? `1-${smp - 1}` : '1';
     const boot = `rw nokaslr loglevel=7 sched_verbose isolcpus=nohz,managed_irq,${isol} irqaffinity=0 rcu_nocbs=${isol} nohz_full=${isol} init=/user panic=-1 console=ttyS0 tsc=nowatchdog -- driver=${driver}`;
-    // One byte collector per channel; console lines are rendered as they complete.
+    // One byte collector per channel. The console and jsonl channels are also split
+    // into lines and streamed into their panes as they complete.
     const chan = { 'kstep.jsonl': [], 'qemu.log': [], 'kstep.cov': [] };
-    let line = '', lines = 0, pending = '', flushTimer = 0, resolveDone;
-    const done = new Promise(r => { resolveDone = r; });
-    const flush = () => {
-      flushTimer = 0;
-      if (!pending) return;
-      const atBottom = con.scrollHeight - con.scrollTop - con.clientHeight < 40;
-      con.append(pending); pending = '';
-      if (atBottom) con.scrollTop = con.scrollHeight;
-      setStatus(`running, ${lines} lines`);
+    const panes = {
+      'qemu.log':    { el: con, count: $('n-console'), line: '', lines: 0, pending: '', timer: 0 },
+      'kstep.jsonl': { el: out, count: $('n-jsonl'),   line: '', lines: 0, pending: '', timer: 0 },
     };
-    const onLine = (l) => {
-      lines++; pending += l + '\n';
-      if (!flushTimer) flushTimer = setTimeout(flush, 50);     // batch DOM updates
-      const panic = l.includes('Kernel panic');
-      if (panic || l.includes('reboot: Restarting system')) {
-        flush();
-        for (const [f, id] of [['kstep.jsonl', 'dl-jsonl'], ['qemu.log', 'dl-log'], ['kstep.cov', 'dl-cov']]) {
-          const a = $(id); a.href = URL.createObjectURL(new Blob([new Uint8Array(chan[f])])); a.hidden = false;
-        }
-        setStatus(panic ? 'kernel panic' : 'done', panic ? 'bad' : 'ok');
-        resolveDone();
+    let resolveDone;
+    const done = new Promise(r => { resolveDone = r; });
+    const flush = (p) => {
+      p.timer = 0;
+      if (!p.pending) return;
+      const atBottom = p.el.scrollHeight - p.el.scrollTop - p.el.clientHeight < 40;
+      p.el.append(p.pending); p.pending = '';
+      if (atBottom) p.el.scrollTop = p.el.scrollHeight;
+      p.count.textContent = `${p.lines} lines`;
+    };
+    const finish = (panic) => {
+      Object.values(panes).forEach(flush);
+      for (const [f, id] of [['kstep.jsonl', 'dl-jsonl'], ['qemu.log', 'dl-log'], ['kstep.cov', 'dl-cov']]) {
+        const a = $(id); a.href = URL.createObjectURL(new Blob([new Uint8Array(chan[f])])); a.hidden = false;
       }
+      setStatus(panic ? 'kernel panic' : 'done', panic ? 'bad' : 'ok');
+      resolveDone();
+    };
+    const onLine = (name, l) => {
+      const p = panes[name];
+      p.lines++; p.pending += l + '\n';
+      if (!p.timer) p.timer = setTimeout(() => { flush(p); if (name === 'qemu.log') setStatus(`running, ${p.lines} lines`); }, 50);
+      if (name === 'qemu.log' && (l.includes('Kernel panic') || l.includes('reboot: Restarting system')))
+        finish(l.includes('Kernel panic'));
     };
     const sink = (name) => (byte) => {
       chan[name].push(byte);
-      if (name === 'qemu.log') { if (byte === 10) { onLine(line); line = ''; } else line += String.fromCharCode(byte); }
+      const p = panes[name];
+      if (!p) return;
+      if (byte === 10) { onLine(name, p.line); p.line = ''; } else p.line += String.fromCharCode(byte);
     };
     setStatus('starting qemu');
     const mod = await Module({
