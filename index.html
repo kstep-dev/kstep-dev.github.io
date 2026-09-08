@@ -29,8 +29,9 @@
 <header>
   <h1>kSTEP on wasm</h1>
   <label>kernel <select id="kernel"></select></label>
-  <label>driver <input id="driver" type="text" value="default"></label>
+  <label>driver <input id="driver" type="text" value=""></label>
   <label>vCPUs <input id="smp" type="number" min="1" max="32" value="2"></label>
+  <label>RAM (MB) <input id="mem" type="number" min="128" max="1536" step="128" value="512"></label>
   <button id="run" class="primary">Run</button>
   <span id="status">idle</span>
 </header>
@@ -58,12 +59,20 @@ const mem64 = new Uint8Array([0,0x61,0x73,0x6d, 1,0,0,0, 5,3,1,4,1]);
 if (!WebAssembly.validate(mem64))
   warn.textContent = `This browser lacks wasm Memory64 (need Chrome 133+ / Firefox 134+). UA: ${navigator.userAgent}`;
 
-// Kernel list from the server.
+// kernels.json: {base, kernels:[{name, driver, num_cpus, mem_mb}]}. `base` is where the
+// images live: the kstep-dev/build repo on GitHub for the published site, ./images locally.
+let base = 'images', kernels = [];
 try {
-  const ks = await (await fetch('kernels.json')).json();
-  $('kernel').replaceChildren(...ks.map(k => new Option(k, k)));
-  if (!ks.length) warn.textContent = 'No kernels found under build/. Run `make KERNEL=<name>` in the kstep root.';
+  ({ base, kernels } = await (await fetch('kernels.json')).json());
+  $('kernel').replaceChildren(...kernels.map(k => new Option(k.name, k.name)));
+  if (!kernels.length) warn.textContent = 'No kernels listed. Build one with `make KERNEL=<name>` in the kstep root.';
 } catch (e) { warn.textContent = 'kernels.json failed: ' + e.message; }
+const fill = () => {
+  const k = kernels.find(k => k.name === $('kernel').value); if (!k) return;
+  $('driver').value = k.driver; $('smp').value = k.num_cpus; $('mem').value = Math.min(k.mem_mb, 1536);
+  warn.textContent = k.mem_mb > 1536 ? `reproduce.py uses ${k.mem_mb} MB for this bug; the wasm heap allows at most 1536 MB.` : '';
+};
+$('kernel').onchange = fill; fill();
 
 let running = false;
 $('run').onclick = async () => {
@@ -71,33 +80,36 @@ $('run').onclick = async () => {
   running = true; $('run').disabled = true;
   for (const id of ['dl-jsonl', 'dl-log', 'dl-cov']) $(id).hidden = true;
   con.textContent = '';
-  const kernel = $('kernel').value, driver = $('driver').value.trim() || 'default';
-  const smp = Math.max(1, +$('smp').value || 2);
+  const kernel = $('kernel').value, driver = $('driver').value.trim() || kernel.replace(/_(buggy|fixed)$/, '');
+  const smp = Math.max(1, +$('smp').value || 2), mem = Math.max(128, +$('mem').value || 512);
   const t0 = performance.now();
   const setStatus = (s, cls = '') => { status.textContent = `${((performance.now() - t0) / 1000).toFixed(1)}s  ${s}`; status.className = cls; };
 
   try {
     setStatus('fetching images');
-    const [kimg, rootfs, { default: Module }] = await Promise.all([
-      fetch(`images/${kernel}/kernel`).then(r => r.arrayBuffer()),
-      fetch(`images/${kernel}/rootfs.cpio`).then(r => r.arrayBuffer()),
-      import('./qemu/qemu-system-aarch64.js'),
+    const get = (u) => fetch(u).then(r => { if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`); return r.arrayBuffer(); });
+    const bios = ['bios-256k.bin', 'linuxboot_dma.bin', 'kvmvapic.bin'];
+    const [kimg, rootfs, { default: Module }, ...biosImgs] = await Promise.all([
+      get(`${base}/${kernel}/kernel`), get(`${base}/${kernel}/rootfs.cpio`),
+      import('./qemu/qemu-system-x86_64.js'), ...bios.map(f => get(`qemu/${f}`)),
     ]);
     const isol = smp > 2 ? `1-${smp - 1}` : '1';
-    const boot = `rw nokaslr loglevel=7 sched_verbose isolcpus=nohz,managed_irq,${isol} irqaffinity=0 rcu_nocbs=${isol} nohz_full=${isol} init=/user panic=-1 console=ttyS0 -- driver=${driver}`;
+    const boot = `rw nokaslr loglevel=7 sched_verbose isolcpus=nohz,managed_irq,${isol} irqaffinity=0 rcu_nocbs=${isol} nohz_full=${isol} init=/user panic=-1 console=ttyS0 tsc=nowatchdog -- driver=${driver}`;
     setStatus('starting qemu');
     const mod = await Module({
       locateFile: (f) => 'qemu/' + f,
       arguments: [
-        '-machine', 'virt', '-cpu', 'cortex-a57', '-smp', String(smp), '-m', '512M',
+        '-smp', String(smp), '-cpu', 'max', '-m', `${mem}M`, '-L', '/bios',
         '-accel', 'tcg,tb-size=500,thread=multi',
         '-kernel', '/kernel', '-initrd', '/rootfs.cpio', '-append', boot,
         '-nographic', '-nodefaults', '-no-reboot',
-        '-chardev', 'file,id=c0,path=/out/qemu.log', '-device', 'pci-serial,chardev=c0',
-        '-chardev', 'file,id=c1,path=/out/kstep.jsonl', '-device', 'pci-serial,chardev=c1',
-        '-chardev', 'file,id=c2,path=/out/kstep.cov', '-device', 'pci-serial,chardev=c2',
+        '-chardev', 'file,id=c0,path=/out/qemu.log', '-serial', 'chardev:c0',
+        '-chardev', 'file,id=c1,path=/out/kstep.jsonl', '-serial', 'chardev:c1',
+        '-chardev', 'file,id=c2,path=/out/kstep.cov', '-serial', 'chardev:c2',
       ],
       preRun: [(m) => {
+        m.FS.mkdir('/bios');
+        bios.forEach((f, i) => m.FS.writeFile(`/bios/${f}`, new Uint8Array(biosImgs[i])));
         m.FS.writeFile('/kernel', new Uint8Array(kimg));
         m.FS.writeFile('/rootfs.cpio', new Uint8Array(rootfs));
         m.FS.mkdir('/out');

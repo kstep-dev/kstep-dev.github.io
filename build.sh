@@ -1,9 +1,9 @@
 #!/bin/bash
-# Build qemu-system-aarch64 for a wasm64 host, end to end:
+# Build qemu-system-x86_64 for a wasm64 host, end to end:
 #   ./build.sh            # all stages
 #   ./build.sh qemu       # just reconfigure+rebuild QEMU (after editing patches/)
 # Stages: setup (apt, emsdk, meson) -> deps (zlib, libffi, pixman, glib) -> qemu.
-# Output: build/qemu/build/qemu-system-aarch64.{js,wasm}
+# Output: build/qemu/build/qemu-system-x86_64.{js,wasm}
 set -euo pipefail
 W=$(cd "$(dirname "$0")" && pwd)
 stage=${1:-all}
@@ -81,12 +81,12 @@ qemu() {
   fi
   mkdir -p "$src/build" && cd "$src/build"
   emconfigure ../configure --static --cpu=wasm64 --cross-prefix= \
-    --target-list=aarch64-softmmu \
+    --target-list=x86_64-softmmu \
     --enable-system --disable-user --disable-tools --disable-docs \
     --without-default-features --with-coroutine=wasm \
     --extra-cflags="-O3 -g0 -matomics -mbulk-memory -DNDEBUG -sASYNCIFY=1 -pthread -sPROXY_TO_PTHREAD=1 -sFORCE_FILESYSTEM -sTOTAL_MEMORY=2300MB -sWASM_BIGINT -sMALLOC=mimalloc"
   emmake make -j"$(nproc)"
-  ls -la qemu-system-aarch64.js qemu-system-aarch64.wasm
+  ls -la qemu-system-x86_64.js qemu-system-x86_64.wasm
 }
 
 case $stage in
