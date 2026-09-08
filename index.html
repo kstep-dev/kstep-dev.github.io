@@ -158,7 +158,8 @@ $('run').onclick = async () => {
         bios.forEach((f, i) => m.FS.writeFile(`/bios/${f}`, new Uint8Array(biosImgs[i])));
         m.FS.writeFile('/kernel', new Uint8Array(kimg));
         m.FS.writeFile('/rootfs.cpio', new Uint8Array(rootfs));
-        Object.keys(chan).forEach((name, i) => m.FS.createDevice('/dev', `kstep${i}`, null, sink(name)));
+        // /dev/kstep0..2 = chardevs c0..c2 = qemu.log, kstep.jsonl, kstep.cov
+        ['qemu.log', 'kstep.jsonl', 'kstep.cov'].forEach((name, i) => m.FS.createDevice('/dev', `kstep${i}`, null, sink(name)));
       }],
       print: (s) => console.log('[qemu]', s),
       printErr: (s) => { if (!s.includes('unsupported syscall')) console.warn('[qemu]', s); },

@@ -67,7 +67,8 @@ mod = await Module({
       m.FS.writeFile(`/bios/${f}`, fs.readFileSync(path.join(qdir, 'pc-bios', f)));
     m.FS.writeFile('/kernel', fs.readFileSync(path.join(kdir, 'kernel')));
     m.FS.writeFile('/rootfs.cpio', fs.readFileSync(path.join(kdir, 'rootfs.cpio')));
-    Object.keys(chan).forEach((name, i) => m.FS.createDevice('/dev', `kstep${i}`, null, sink(name)));
+    // /dev/kstep0..2 = chardevs char0..char2 = qemu.log, kstep.jsonl, kstep.cov
+    ['qemu.log', 'kstep.jsonl', 'kstep.cov'].forEach((name, i) => m.FS.createDevice('/dev', `kstep${i}`, null, sink(name)));
   }],
   print: (s) => console.log('[qemu]', s),
   printErr: (s) => { if (!s.includes('unsupported syscall')) console.error('[qemu]', s); },
