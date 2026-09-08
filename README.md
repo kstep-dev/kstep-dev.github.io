@@ -23,14 +23,13 @@ but only with the TCI interpreter, which is about 4x slower for kSTEP.
 
 | File          | Purpose |
 |---------------|---------|
-| `build.sh`    | `setup` (apt, emsdk 4.0.23, meson) -> `deps` (zlib, libffi, pixman, glib for wasm64) -> `qemu` |
-| `env.sh`      | paths and versions shared by the scripts; `source` it before `run.mjs` / `serve.py` |
-| `patches/`    | the JIT backend patch applied on top of `QEMU_TAG` |
-| `run.mjs`     | headless runner for Node |
-| `serve.py`    | static server with the COOP/COEP headers browsers need for SharedArrayBuffer |
+| `build.sh`    | `setup` (apt, emsdk 4.0.23, meson) -> `deps` (zlib, libffi, pixman, glib for wasm64) -> `qemu` (v11.1.0 + `patches/`) |
+| `patches/`    | the JIT backend patch applied on top of the pinned QEMU release |
+| `run.mjs`, `run.sh` | headless runner for Node; `run.sh` finds emsdk's Node and passes the V8 flag |
 | `index.html`  | browser UI: pick kernel, driver, vCPUs; streams the console; downloads results |
-| `coi-serviceworker.min.js` | adds COOP/COEP headers on static hosts such as GitHub Pages (MIT, gzuidhof/coi-serviceworker) |
-| `deploy.sh`   | assembles the site with the wasm build and kernel images and force-pushes it to `gh-pages` |
+| `coi-serviceworker.min.js` | adds the COOP/COEP headers static hosts cannot send (MIT, gzuidhof/coi-serviceworker) |
+| `deploy.sh`   | stages the site (page + wasm + kernel images) in `build/site` and force-pushes it to `gh-pages` |
+| `serve.sh`    | stages the same site and serves it with `python3 -m http.server` for local use |
 
 Everything generated lives under `build/` (gitignored). kSTEP images come from
 `$KSTEP_DIR/build/<kernel>/{kernel,rootfs.cpio}` (built by `make KERNEL=<kernel>`).
@@ -40,22 +39,21 @@ Everything generated lives under `build/` (gitignored). kSTEP images come from
 ## Usage
 
 ```sh
-./build.sh                    # ~15 min first time; ./build.sh qemu to rebuild QEMU only (~5 min)
+./build.sh                    # ~15 min first time; ./build.sh qemu rebuilds QEMU only (~5 min)
 
-source env.sh
-$NODE --wasm-lazy-compilation run.mjs --kernel v6.14 --driver default --smp 2
+./run.sh --kernel v6.14 --driver default --smp 2
 #   guest console -> stdout, runner status -> stderr, --quiet hides the console
 #   results -> results/<kernel>-<driver>/{qemu.log,kstep.jsonl,kstep.cov}
 
-./serve.py --port 8080        # then open http://localhost:8080/
-./deploy.sh v6.14             # publish to gh-pages: https://kstep-dev.github.io/web/
+./serve.sh 8080 v6.14         # local: http://localhost:8080/
+./deploy.sh v6.14             # publish: https://kstep-dev.github.io/web/
 ```
 
-`deploy.sh` takes kernel names (default: every kernel under `$KSTEP_DIR/build`),
-copies the wasm build plus those images into `build/site/`, and force-pushes
-that as an orphan `gh-pages` branch, so no history accumulates there. The site
-needs GitHub Pages set to serve from `gh-pages`. The service worker installs
-on first load and reloads the page once so SharedArrayBuffer becomes available.
+Both `serve.sh` and `deploy.sh` take kernel names (default: every kernel under
+`$KSTEP_DIR/build`). `deploy.sh` pushes `build/site` as an orphan `gh-pages`
+branch, so no history accumulates there; GitHub Pages is set to serve that
+branch. The service worker installs on first load and reloads the page once so
+SharedArrayBuffer becomes available.
 
 vCPUs always run under MTTCG, one host thread each. Browsers need wasm
 Memory64: Chrome 133+ or Firefox 134+ (Safari would need a wasm32 build via

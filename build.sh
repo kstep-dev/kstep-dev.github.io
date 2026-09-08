@@ -8,19 +8,28 @@ set -euo pipefail
 W=$(cd "$(dirname "$0")" && pwd)
 stage=${1:-all}
 mkdir -p "$W/build"
+QEMU_TAG=v11.1.0          # release that patches/ apply to
+EMSDK_VERSION=4.0.23
+
+toolchain() {  # emsdk, meson venv, and the cross-built deps prefix
+  source "$W/build/emsdk/emsdk_env.sh" >/dev/null 2>&1
+  export PATH="$W/build/venv/bin:$PATH"
+  export TARGET="$W/build/deps/target" CPATH="$W/build/deps/target/include"
+  export PKG_CONFIG_PATH="$TARGET/lib/pkgconfig" EM_PKG_CONFIG_PATH="$TARGET/lib/pkgconfig"
+}
 
 setup() {
   sudo apt-get install -y -q autoconf build-essential libglib2.0-dev libtool pkgconf ninja-build python3-pip python3-venv
   if [ ! -d "$W/build/emsdk" ]; then
     git clone -q --depth 1 https://github.com/emscripten-core/emsdk.git "$W/build/emsdk"
-    (cd "$W/build/emsdk" && ./emsdk install 4.0.23 && ./emsdk activate 4.0.23)
+    (cd "$W/build/emsdk" && ./emsdk install $EMSDK_VERSION && ./emsdk activate $EMSDK_VERSION)
   fi
   [ -d "$W/build/venv" ] || { python3 -m venv "$W/build/venv" && "$W/build/venv/bin/pip" -q install meson==1.5.0 tomli; }
 }
 
 # Mirrors upstream tests/docker/dockerfiles/emsdk-wasm64-cross.docker, without Docker.
 deps() {
-  source "$W/env.sh"
+  toolchain
   export CFLAGS="-O3 -pthread -DWASM_BIGINT -sMEMORY64=1" CXXFLAGS="-O3 -pthread -DWASM_BIGINT -sMEMORY64=1"
   export LDFLAGS="-sWASM_BIGINT -sASYNCIFY=1 -L$TARGET/lib -sMEMORY64=1"
   mkdir -p "$TARGET" "$W/build/deps" && cd "$W/build/deps"
@@ -63,7 +72,7 @@ deps() {
 }
 
 qemu() {
-  source "$W/env.sh"
+  toolchain
   export CFLAGS="-O3 -pthread -DWASM_BIGINT" CXXFLAGS="-O3 -pthread -DWASM_BIGINT" LDFLAGS="-sWASM_BIGINT -sASYNCIFY=1 -L$TARGET/lib"
   src="$W/build/qemu"
   if [ ! -d "$src" ]; then

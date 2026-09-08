@@ -1,6 +1,6 @@
 // Run a kstep driver inside a wasm-compiled QEMU under Node.
 //
-//   $NODE --wasm-lazy-compilation run.mjs [--kernel v6.14] [--driver default] [--smp 2] [--out results] [--quiet]
+//   ./run.sh [--kernel v6.14] [--driver default] [--smp 2] [--out results] [--quiet]
 //
 // Guest console goes to stdout; runner status goes to stderr. --quiet suppresses the console.
 //

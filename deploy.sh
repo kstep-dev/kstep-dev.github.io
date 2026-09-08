@@ -1,10 +1,16 @@
 #!/bin/bash
-# Publish the browser UI to the gh-pages branch (history is not kept).
-#   ./deploy.sh [kernel ...]     # default: every $KSTEP_DIR/build/<kernel> with kernel + rootfs.cpio
+# Assemble the static site in build/site and publish it to the gh-pages branch
+# (history is not kept).
+#   ./deploy.sh [kernel ...]          # default: every $KSTEP_DIR/build/<kernel> with kernel + rootfs.cpio
+#   ./deploy.sh --stage-only [...]    # just build/site, no push (serve.sh uses this)
 # Site layout: index.html, coi-serviceworker.min.js, kernels.json, qemu/{js,wasm}, images/<kernel>/{kernel,rootfs.cpio}
 set -euo pipefail
 W=$(cd "$(dirname "$0")" && pwd)
-source "$W/env.sh"
+push=1; [ "${1:-}" = --stage-only ] && { push=0; shift; }
+# kSTEP checkout: ../.. when this repo is kSTEP's docs/web submodule, else a sibling ../kstep.
+if [ -z "${KSTEP_DIR:-}" ]; then
+  if [ -f "$W/../../run.py" ]; then KSTEP_DIR="$W/../.."; else KSTEP_DIR="$W/../kstep"; fi
+fi
 qemu="$W/build/qemu/build"
 [ -f "$qemu/qemu-system-aarch64.wasm" ] || { echo "no wasm build; run ./build.sh"; exit 1; }
 
@@ -26,6 +32,7 @@ done
 printf '%s\n' "${kernels[@]}" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().split()))' > "$site/kernels.json"
 touch "$site/.nojekyll"
 echo "site: $(du -sh "$site" | cut -f1), kernels: ${kernels[*]}"
+[ $push -eq 1 ] || exit 0
 
 remote=$(git -C "$W" remote get-url origin)
 cd "$site"
