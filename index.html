@@ -95,6 +95,35 @@ $('run').onclick = async () => {
     ]);
     const isol = smp > 2 ? `1-${smp - 1}` : '1';
     const boot = `rw nokaslr loglevel=7 sched_verbose isolcpus=nohz,managed_irq,${isol} irqaffinity=0 rcu_nocbs=${isol} nohz_full=${isol} init=/user panic=-1 console=ttyS0 tsc=nowatchdog -- driver=${driver}`;
+    // One byte collector per channel; console lines are rendered as they complete.
+    const chan = { 'kstep.jsonl': [], 'qemu.log': [], 'kstep.cov': [] };
+    let line = '', lines = 0, pending = '', flushTimer = 0, resolveDone;
+    const done = new Promise(r => { resolveDone = r; });
+    const flush = () => {
+      flushTimer = 0;
+      if (!pending) return;
+      const atBottom = con.scrollHeight - con.scrollTop - con.clientHeight < 40;
+      con.append(pending); pending = '';
+      if (atBottom) con.scrollTop = con.scrollHeight;
+      setStatus(`running, ${lines} lines`);
+    };
+    const onLine = (l) => {
+      lines++; pending += l + '\n';
+      if (!flushTimer) flushTimer = setTimeout(flush, 50);     // batch DOM updates
+      const panic = l.includes('Kernel panic');
+      if (panic || l.includes('reboot: Restarting system')) {
+        flush();
+        for (const [f, id] of [['kstep.jsonl', 'dl-jsonl'], ['qemu.log', 'dl-log'], ['kstep.cov', 'dl-cov']]) {
+          const a = $(id); a.href = URL.createObjectURL(new Blob([new Uint8Array(chan[f])])); a.hidden = false;
+        }
+        setStatus(panic ? 'kernel panic' : 'done', panic ? 'bad' : 'ok');
+        resolveDone();
+      }
+    };
+    const sink = (name) => (byte) => {
+      chan[name].push(byte);
+      if (name === 'qemu.log') { if (byte === 10) { onLine(line); line = ''; } else line += String.fromCharCode(byte); }
+    };
     setStatus('starting qemu');
     const mod = await Module({
       locateFile: (f) => 'qemu/' + f,
@@ -103,47 +132,24 @@ $('run').onclick = async () => {
         '-accel', 'tcg,tb-size=500,thread=multi',
         '-kernel', '/kernel', '-initrd', '/rootfs.cpio', '-append', boot,
         '-nographic', '-nodefaults', '-no-reboot',
-        '-chardev', 'file,id=c0,path=/out/qemu.log', '-serial', 'chardev:c0',
-        '-chardev', 'file,id=c1,path=/out/kstep.jsonl', '-serial', 'chardev:c1',
-        '-chardev', 'file,id=c2,path=/out/kstep.cov', '-serial', 'chardev:c2',
+        '-chardev', 'file,id=c0,path=/dev/kstep0', '-serial', 'chardev:c0',
+        '-chardev', 'file,id=c1,path=/dev/kstep1', '-serial', 'chardev:c1',
+        '-chardev', 'file,id=c2,path=/dev/kstep2', '-serial', 'chardev:c2',
       ],
       preRun: [(m) => {
         m.FS.mkdir('/bios');
         bios.forEach((f, i) => m.FS.writeFile(`/bios/${f}`, new Uint8Array(biosImgs[i])));
         m.FS.writeFile('/kernel', new Uint8Array(kimg));
         m.FS.writeFile('/rootfs.cpio', new Uint8Array(rootfs));
-        m.FS.mkdir('/out');
+        Object.keys(chan).forEach((name, i) => m.FS.createDevice('/dev', `kstep${i}`, null, sink(name)));
       }],
       print: (s) => console.log('[qemu]', s),
       printErr: (s) => { if (!s.includes('unsupported syscall')) console.warn('[qemu]', s); },
     });
 
-    // Stream the guest console out of MEMFS until the driver exits.
-    let printed = 0;
-    await new Promise((resolve) => {
-      const iv = setInterval(() => {
-        let log = '';
-        try { log = mod.FS.readFile('/out/qemu.log', { encoding: 'utf8' }); } catch { return; }
-        const nl = log.lastIndexOf('\n') + 1;
-        if (nl > printed) {
-          const atBottom = con.scrollHeight - con.scrollTop - con.clientHeight < 40;
-          con.append(log.slice(printed, nl)); printed = nl;
-          if (atBottom) con.scrollTop = con.scrollHeight;
-          setStatus(`running, ${log.split('\n').length} lines`);
-        }
-        const done = log.includes('reboot: Restarting system'), panic = log.includes('Kernel panic');
-        if (done || panic) {
-          clearInterval(iv);
-          for (const [id, f] of [['dl-jsonl', 'kstep.jsonl'], ['dl-log', 'qemu.log'], ['dl-cov', 'kstep.cov']]) {
-            try {
-              const a = $(id); a.href = URL.createObjectURL(new Blob([mod.FS.readFile(`/out/${f}`)])); a.hidden = false;
-            } catch {}
-          }
-          setStatus(panic ? 'kernel panic' : 'done', panic ? 'bad' : 'ok');
-          resolve();
-        }
-      }, 250);
-    });
+    // The chardevs write to /dev/kstep0..2, Emscripten device nodes whose write callbacks
+    // (registered in preRun above) push each byte here; nothing is polled.
+    await done;
   } catch (e) {
     setStatus('error: ' + e.message, 'bad'); console.error(e);
   }

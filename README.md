@@ -8,17 +8,18 @@ repo, and the boot arguments from kSTEP's `run.py` are reused as-is; kSTEP
 itself needs no changes. The published page fetches the images straight from
 that repo on GitHub, so the site only carries the 12 MB QEMU build.
 
-QEMU is pinned to the v11.1.0 release plus one patch: Kohei Tokunaga's wasm
-JIT backend (the `wasm64-tcg-b` branch of https://github.com/ktock/qemu,
-33 commits) rebased onto the release. Upstream QEMU can already target wasm64
-but only with the TCI interpreter, which is about 4x slower for kSTEP.
+QEMU is Kohei Tokunaga's `wasm64-tcg-b` branch of https://github.com/ktock/qemu
+(QEMU 10.2.50 plus his 33-commit wasm JIT backend), pinned to a commit in
+`build.sh`. Upstream QEMU can already target wasm64 but only with the TCI
+interpreter, which is about 4x slower for kSTEP. Rebasing the backend onto the
+v11.1.0 release was tried (see Notes) and shelved.
 
 ## Measured (aarch64 host without KVM, Node 24)
 
 | Guest / QEMU                                             | Driver done | kstep.jsonl |
 |----------------------------------------------------------|-------------|-------------|
 | x86_64 `sync_wakeup_buggy`, native QEMU 8.2 TCG           | 1.4 s       | matches the published results repo |
-| x86_64 `sync_wakeup_buggy`, this build                    | 8-9 s       | one line differs (see Notes) |
+| x86_64 `sync_wakeup_buggy`, this build                    | 8 s         | deterministic; one line differs from native (see Notes) |
 | aarch64 v6.14 `default`, native TCG                       | 0.65 s      | baseline |
 | aarch64 v6.14 `default`, same QEMU built for aarch64      | 10 s        | identical |
 | aarch64, upstream TCI interpreter instead of the JIT      | 40-140 s    | differs |
@@ -27,8 +28,7 @@ but only with the TCI interpreter, which is about 4x slower for kSTEP.
 
 | File          | Purpose |
 |---------------|---------|
-| `build.sh`    | `setup` (apt, emsdk 4.0.23, meson) -> `deps` (zlib, libffi, pixman, glib for wasm64) -> `qemu` (v11.1.0 + `patches/`, x86_64-softmmu) |
-| `patches/`    | the JIT backend patch applied on top of the pinned QEMU release |
+| `build.sh`    | `setup` (apt, emsdk 4.0.23, meson) -> `deps` (zlib, libffi, pixman, glib for wasm64) -> `qemu` (x86_64-softmmu from the pinned branch) |
 | `run.mjs`, `run.sh` | headless runner for Node; `run.sh` finds emsdk's Node and passes the V8 flag |
 | `index.html`  | browser UI: pick kernel (driver, vCPUs, RAM prefilled from `reproduce.py`); streams the console; downloads results |
 | `coi-serviceworker.min.js` | adds the COOP/COEP headers static hosts cannot send (MIT, gzuidhof/coi-serviceworker) |
@@ -73,8 +73,13 @@ Firefox 134+ (Safari would need a wasm32 build via QEMU's
   needs a few GB while optimizing the 20 MB module; `--wasm-lazy-compilation`
   keeps that bounded. `--liftoff-only --no-wasm-tier-up` is the safe fallback
   if Node gets OOM-killed, at roughly 3x the run time.
-* **Exit.** QEMU does not exit on guest reboot under Emscripten; both runners
-  detect completion from the console log.
+* **Output path.** The three chardevs write to `/dev/kstep0..2`, Emscripten
+  device nodes whose JavaScript write callbacks receive every byte as QEMU emits
+  it, so console lines are pushed to the page (and to stdout in `run.mjs`)
+  without polling. QEMU does not exit on guest reboot under Emscripten; both
+  runners treat the reboot line on the console as completion.
+* **Single-threaded TCG** (`thread=single`) aborts in this backend with
+  `Assertion failed: icount_enabled()`; only MTTCG is usable.
 * **Correctness.** Native QEMU reproduces the published `kstep.jsonl` for
   `sync_wakeup_buggy` exactly. Under wasm (6-20x slower) the trace usually
   differs in one step (a wakeup lands a tick late) and, when the host is
@@ -84,9 +89,13 @@ Firefox 134+ (Safari would need a wasm32 build via QEMU's
   dependence (kthreadd creation order, IPI tick delivery) that only shows on
   slow hosts. Worth fixing in kSTEP before treating browser traces as
   authoritative.
-* **Rebasing the patch.** Moving `QEMU_TAG` means re-applying `patches/`; expect
-  a handful of context conflicts and new `outop_*` entries to stub in
-  `tcg/wasm64/tcg-target.c.inc` as TCG grows ops.
+* **Rebase attempt.** The 33 commits apply to v11.1.0 with two one-line context
+  fixes, the `wasm64_32bit_address_limit` build option, and seven new
+  `outop_*` stubs. That build ran aarch64 kSTEP correctly but x86_64 guests hit
+  an intermittent NULL dereference in `kstep_tick_init` (`tick_get_tick_sched`
+  returning 0), never with the JIT disabled and never on the original branch,
+  so a translation is miscompiled somewhere in the rebased combination. Not
+  yet isolated; the original branch is used instead.
 * **Not tried / dropped.** A virt-only device config (`--with-devices-aarch64`)
   cut QEMU compile time from ~5 min to ~80 s but only shrank the wasm by 5-25%
   and kept tripping Kconfig dependencies, so the default device set is used.

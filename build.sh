@@ -1,14 +1,20 @@
 #!/bin/bash
 # Build qemu-system-x86_64 for a wasm64 host, end to end:
 #   ./build.sh            # all stages
-#   ./build.sh qemu       # just reconfigure+rebuild QEMU (after editing patches/)
+#   ./build.sh qemu       # just reconfigure+rebuild QEMU
 # Stages: setup (apt, emsdk, meson) -> deps (zlib, libffi, pixman, glib) -> qemu.
 # Output: build/qemu/build/qemu-system-x86_64.{js,wasm}
 set -euo pipefail
 W=$(cd "$(dirname "$0")" && pwd)
 stage=${1:-all}
 mkdir -p "$W/build"
-QEMU_TAG=v11.1.0          # release that patches/ apply to
+# Kohei Tokunaga's QEMU branch carrying the wasm JIT backend (QEMU 10.2.50 + his 33
+# commits), pinned to a commit. The same commits rebased onto the v11.1.0 release built
+# and ran, but x86_64 guests then hit an intermittent init-time NULL dereference in kSTEP
+# that the original branch never does, so the original is used until that is understood.
+QEMU_REPO=https://github.com/ktock/qemu
+QEMU_BRANCH=wasm64-tcg-b
+QEMU_COMMIT=8f1406ba3307a10c58be24a8ff00ab6a5d3b6169
 EMSDK_VERSION=4.0.23
 
 toolchain() {  # emsdk, meson venv, and the cross-built deps prefix
@@ -76,8 +82,8 @@ qemu() {
   export CFLAGS="-O3 -pthread -DWASM_BIGINT" CXXFLAGS="-O3 -pthread -DWASM_BIGINT" LDFLAGS="-sWASM_BIGINT -sASYNCIFY=1 -L$TARGET/lib"
   src="$W/build/qemu"
   if [ ! -d "$src" ]; then
-    git clone -q --depth 1 -b "$QEMU_TAG" https://gitlab.com/qemu-project/qemu.git "$src"
-    git -C "$src" -c user.name=kstep -c user.email=kstep@localhost am -q "$W"/patches/*.patch
+    git clone -q --depth 1 -b "$QEMU_BRANCH" "$QEMU_REPO" "$src"
+    [ "$(git -C "$src" rev-parse HEAD)" = "$QEMU_COMMIT" ] || { git -C "$src" fetch -q --depth 50 origin "$QEMU_BRANCH"; git -C "$src" checkout -q "$QEMU_COMMIT"; }
   fi
   mkdir -p "$src/build" && cd "$src/build"
   emconfigure ../configure --static --cpu=wasm64 --cross-prefix= \
