@@ -48,6 +48,7 @@
 <!-- GitHub Pages cannot set COOP/COEP headers; this service worker adds them on reload. -->
 <script src="coi-serviceworker.min.js"></script>
 <script type="module">
+const V = '__VERSION__';   // replaced by deploy.sh; busts caches of the wasm/js across deploys
 const $ = (id) => document.getElementById(id);
 const con = $('console'), status = $('status'), warn = $('warn');
 
@@ -61,7 +62,7 @@ if (typeof SharedArrayBuffer === 'undefined')
 // images live: the kstep-dev/build repo on GitHub for the published site, ./images locally.
 let base = 'images', kernels = [];
 try {
-  ({ base, kernels } = await (await fetch('kernels.json')).json());
+  ({ base, kernels } = await (await fetch(`kernels.json?v=${V}`)).json());
   $('kernel').replaceChildren(...kernels.map(k => new Option(k.name, k.name)));
   if (!kernels.length) warn.textContent = 'No kernels listed. Build one with `make KERNEL=<name>` in the kstep root.';
 } catch (e) { warn.textContent = 'kernels.json failed: ' + e.message; }
@@ -89,7 +90,7 @@ $('run').onclick = async () => {
     const bios = ['bios-256k.bin', 'linuxboot_dma.bin', 'kvmvapic.bin'];
     const [kimg, rootfs, { default: Module }, ...biosImgs] = await Promise.all([
       get(`${base}/${kernel}/kernel`), get(`${base}/${kernel}/rootfs.cpio`),
-      import('./qemu/qemu-system-x86_64.js'), ...bios.map(f => get(`qemu/${f}`)),
+      import(`./qemu/qemu-system-x86_64.js?v=${V}`), ...bios.map(f => get(`qemu/${f}?v=${V}`)),
     ]);
     const isol = smp > 2 ? `1-${smp - 1}` : '1';
     const boot = `rw nokaslr loglevel=7 sched_verbose isolcpus=nohz,managed_irq,${isol} irqaffinity=0 rcu_nocbs=${isol} nohz_full=${isol} init=/user panic=-1 console=ttyS0 tsc=nowatchdog -- driver=${driver}`;
@@ -124,7 +125,7 @@ $('run').onclick = async () => {
     };
     setStatus('starting qemu');
     const mod = await Module({
-      locateFile: (f) => 'qemu/' + f,
+      locateFile: (f) => `qemu/${f}?v=${V}`,
       arguments: [
         '-smp', String(smp), '-cpu', 'max', '-m', `${mem}M`, '-L', '/bios',
         '-accel', 'tcg,tb-size=500,thread=multi',
