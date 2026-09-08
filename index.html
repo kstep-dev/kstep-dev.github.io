@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kSTEP on wasm</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1a1a1a; --bg: #f7f7f5; --mute: #6b6b6b; --line: #d9d9d4; --accent: #2b6cb0; --ok: #2f855a; --bad: #c53030; --con: #111; --confg: #d8d8d8; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #e6e6e3; --bg: #16161a; --mute: #9a9a9a; --line: #2e2e33; --accent: #63a4ff; --ok: #48bb78; --bad: #f56565; --con: #0b0b0d; --confg: #cfcfcf; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, sans-serif; color: var(--fg); background: var(--bg); display: flex; flex-direction: column; height: 100vh; }
+  header { display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: end; padding: .8rem 1rem; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 1rem; margin: 0 1rem 0 0; align-self: center; }
+  label { display: flex; flex-direction: column; font-size: .75rem; color: var(--mute); gap: .15rem; }
+  input, select, button { font: inherit; padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: var(--fg); }
+  input[type=number] { width: 5rem; } input[type=text] { width: 9rem; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--mute); }
+  #status.ok { color: var(--ok); } #status.bad { color: var(--bad); }
+  main { flex: 1; display: grid; grid-template-rows: 1fr auto; min-height: 0; }
+  #console { margin: 0; padding: .75rem 1rem; overflow: auto; background: var(--con); color: var(--confg); font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+  footer { display: flex; gap: 1rem; padding: .5rem 1rem; border-top: 1px solid var(--line); font-size: .8rem; color: var(--mute); align-items: center; }
+  footer a { color: var(--accent); } footer a[hidden] { display: none; }
+  #warn { color: var(--bad); }
+</style>
+</head>
+<body>
+<header>
+  <h1>kSTEP on wasm</h1>
+  <label>kernel <select id="kernel"></select></label>
+  <label>driver <input id="driver" type="text" value="default"></label>
+  <label>vCPUs <input id="smp" type="number" min="1" max="32" value="2"></label>
+  <button id="run" class="primary">Run</button>
+  <span id="status">idle</span>
+</header>
+<main>
+  <pre id="console"></pre>
+  <footer>
+    <span id="warn"></span>
+    <span id="dl">results:</span>
+    <a id="dl-jsonl" hidden download="kstep.jsonl">kstep.jsonl</a>
+    <a id="dl-log" hidden download="qemu.log">qemu.log</a>
+    <a id="dl-cov" hidden download="kstep.cov">kstep.cov</a>
+  </footer>
+</main>
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const con = $('console'), status = $('status'), warn = $('warn');
+
+// Preconditions: SharedArrayBuffer (COOP/COEP headers) and Memory64.
+if (typeof SharedArrayBuffer === 'undefined')
+  warn.textContent = 'SharedArrayBuffer unavailable: serve via serve.py so COOP/COEP headers are set.';
+// Minimal module with one 64-bit memory (limits flag 0x04 = memory64).
+const mem64 = new Uint8Array([0,0x61,0x73,0x6d, 1,0,0,0, 5,3,1,4,1]);
+if (!WebAssembly.validate(mem64))
+  warn.textContent = `This browser lacks wasm Memory64 (need Chrome 133+ / Firefox 134+). UA: ${navigator.userAgent}`;
+
+// Kernel list from the server.
+try {
+  const ks = await (await fetch('/kernels.json')).json();
+  $('kernel').replaceChildren(...ks.map(k => new Option(k, k)));
+  if (!ks.length) warn.textContent = 'No kernels found under build/. Run `make KERNEL=<name>` in the kstep root.';
+} catch (e) { warn.textContent = 'kernels.json failed: ' + e.message; }
+
+let running = false;
+$('run').onclick = async () => {
+  if (running) return;
+  running = true; $('run').disabled = true;
+  for (const id of ['dl-jsonl', 'dl-log', 'dl-cov']) $(id).hidden = true;
+  con.textContent = '';
+  const kernel = $('kernel').value, driver = $('driver').value.trim() || 'default';
+  const smp = Math.max(1, +$('smp').value || 2);
+  const t0 = performance.now();
+  const setStatus = (s, cls = '') => { status.textContent = `${((performance.now() - t0) / 1000).toFixed(1)}s  ${s}`; status.className = cls; };
+
+  try {
+    setStatus('fetching images');
+    const [kimg, rootfs, { default: Module }] = await Promise.all([
+      fetch(`/images/${kernel}/kernel`).then(r => r.arrayBuffer()),
+      fetch(`/images/${kernel}/rootfs.cpio`).then(r => r.arrayBuffer()),
+      import('/qemu/qemu-system-aarch64.js'),
+    ]);
+    const isol = smp > 2 ? `1-${smp - 1}` : '1';
+    const boot = `rw nokaslr loglevel=7 sched_verbose isolcpus=nohz,managed_irq,${isol} irqaffinity=0 rcu_nocbs=${isol} nohz_full=${isol} init=/user panic=-1 console=ttyS0 -- driver=${driver}`;
+    setStatus('starting qemu');
+    const mod = await Module({
+      locateFile: (f) => '/qemu/' + f,
+      arguments: [
+        '-machine', 'virt', '-cpu', 'cortex-a57', '-smp', String(smp), '-m', '512M',
+        '-accel', 'tcg,tb-size=500,thread=multi',
+        '-kernel', '/kernel', '-initrd', '/rootfs.cpio', '-append', boot,
+        '-nographic', '-nodefaults', '-no-reboot',
+        '-chardev', 'file,id=c0,path=/out/qemu.log', '-device', 'pci-serial,chardev=c0',
+        '-chardev', 'file,id=c1,path=/out/kstep.jsonl', '-device', 'pci-serial,chardev=c1',
+        '-chardev', 'file,id=c2,path=/out/kstep.cov', '-device', 'pci-serial,chardev=c2',
+      ],
+      preRun: [(m) => {
+        m.FS.writeFile('/kernel', new Uint8Array(kimg));
+        m.FS.writeFile('/rootfs.cpio', new Uint8Array(rootfs));
+        m.FS.mkdir('/out');
+      }],
+      print: (s) => console.log('[qemu]', s),
+      printErr: (s) => { if (!s.includes('unsupported syscall')) console.warn('[qemu]', s); },
+    });
+
+    // Stream the guest console out of MEMFS until the driver exits.
+    let printed = 0;
+    await new Promise((resolve) => {
+      const iv = setInterval(() => {
+        let log = '';
+        try { log = mod.FS.readFile('/out/qemu.log', { encoding: 'utf8' }); } catch { return; }
+        const nl = log.lastIndexOf('\n') + 1;
+        if (nl > printed) {
+          const atBottom = con.scrollHeight - con.scrollTop - con.clientHeight < 40;
+          con.append(log.slice(printed, nl)); printed = nl;
+          if (atBottom) con.scrollTop = con.scrollHeight;
+          setStatus(`running, ${log.split('\n').length} lines`);
+        }
+        const done = log.includes('reboot: Restarting system'), panic = log.includes('Kernel panic');
+        if (done || panic) {
+          clearInterval(iv);
+          for (const [id, f] of [['dl-jsonl', 'kstep.jsonl'], ['dl-log', 'qemu.log'], ['dl-cov', 'kstep.cov']]) {
+            try {
+              const a = $(id); a.href = URL.createObjectURL(new Blob([mod.FS.readFile(`/out/${f}`)])); a.hidden = false;
+            } catch {}
+          }
+          setStatus(panic ? 'kernel panic' : 'done', panic ? 'bad' : 'ok');
+          resolve();
+        }
+      }, 250);
+    });
+  } catch (e) {
+    setStatus('error: ' + e.message, 'bad'); console.error(e);
+  }
+  // The QEMU instance does not exit cleanly under Emscripten; reload to run again.
+  $('run').textContent = 'Reload to run again';
+  $('run').disabled = false; $('run').onclick = () => location.reload();
+};
+</script>
+</body>
+</html>
