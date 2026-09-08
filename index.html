@@ -31,7 +31,7 @@
   <label>kernel <select id="kernel"></select></label>
   <label>driver <input id="driver" type="text" value=""></label>
   <label>vCPUs <input id="smp" type="number" min="1" max="32" value="2"></label>
-  <label>RAM (MB) <input id="mem" type="number" min="128" max="1536" step="128" value="512"></label>
+  <label>RAM (MB) <input id="mem" type="number" min="128" max="1024" step="128" value="512"></label>
   <button id="run" class="primary">Run</button>
   <span id="status">idle</span>
 </header>
@@ -54,10 +54,8 @@ const con = $('console'), status = $('status'), warn = $('warn');
 // Preconditions: SharedArrayBuffer (COOP/COEP headers) and Memory64.
 if (typeof SharedArrayBuffer === 'undefined')
   warn.textContent = 'SharedArrayBuffer unavailable: the page needs COOP/COEP headers (serve.py sets them; on static hosting the service worker adds them after one reload).';
-// Minimal module with one 64-bit memory (limits flag 0x04 = memory64).
-const mem64 = new Uint8Array([0,0x61,0x73,0x6d, 1,0,0,0, 5,3,1,4,1]);
-if (!WebAssembly.validate(mem64))
-  warn.textContent = `This browser lacks wasm Memory64 (need Chrome 133+ / Firefox 134+). UA: ${navigator.userAgent}`;
+// The QEMU binary is lowered to wasm32 (QEMU's --enable-wasm64-32bit-address-limit), so no
+// Memory64 check is needed; SharedArrayBuffer (above) is the only hard requirement.
 
 // kernels.json: {base, kernels:[{name, driver, num_cpus, mem_mb}]}. `base` is where the
 // images live: the kstep-dev/build repo on GitHub for the published site, ./images locally.
@@ -69,8 +67,8 @@ try {
 } catch (e) { warn.textContent = 'kernels.json failed: ' + e.message; }
 const fill = () => {
   const k = kernels.find(k => k.name === $('kernel').value); if (!k) return;
-  $('driver').value = k.driver; $('smp').value = k.num_cpus; $('mem').value = Math.min(k.mem_mb, 1536);
-  warn.textContent = k.mem_mb > 1536 ? `reproduce.py uses ${k.mem_mb} MB for this bug; the wasm heap allows at most 1536 MB.` : '';
+  $('driver').value = k.driver; $('smp').value = k.num_cpus; $('mem').value = Math.min(k.mem_mb, 1024);
+  warn.textContent = k.mem_mb > 1024 ? `reproduce.py uses ${k.mem_mb} MB for this bug; the wasm heap allows at most 1024 MB.` : '';
 };
 $('kernel').onchange = fill; fill();
 

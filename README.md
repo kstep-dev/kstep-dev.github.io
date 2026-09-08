@@ -19,7 +19,7 @@ v11.1.0 release was tried (see Notes) and shelved.
 | Guest / QEMU                                             | Driver done | kstep.jsonl |
 |----------------------------------------------------------|-------------|-------------|
 | x86_64 `sync_wakeup_buggy`, native QEMU 8.2 TCG           | 1.4 s       | matches the published results repo |
-| x86_64 `sync_wakeup_buggy`, this build                    | 8 s         | deterministic; one line differs from native (see Notes) |
+| x86_64 `sync_wakeup_buggy`, this build (wasm32-lowered)   | 8.3-8.6 s   | identical to native QEMU 11.1; one line differs from QEMU 8.2 (see Notes) |
 | aarch64 v6.14 `default`, native TCG                       | 0.65 s      | baseline |
 | aarch64 v6.14 `default`, same QEMU built for aarch64      | 10 s        | identical |
 | aarch64, upstream TCI interpreter instead of the JIT      | 40-140 s    | differs |
@@ -62,10 +62,14 @@ installs on first load and reloads the page once so SharedArrayBuffer becomes
 available.
 
 vCPUs always run under MTTCG, one host thread each. Guest RAM is capped at
-1536 MB by the fixed 2300 MB wasm heap, so `long_balance` (4096 MB in
-`reproduce.py`) does not fit. Browsers need wasm Memory64: Chrome 133+ or
-Firefox 134+ (Safari would need a wasm32 build via QEMU's
-`--enable-wasm64-32bit-address-limit`, not done here).
+1024 MB: the wasm heap is fixed at 2 GB (the wasm32 lowering clamps the
+requested 2300 MB), so `long_balance` (4096 MB in `reproduce.py`) does not fit.
+
+The binary is built with QEMU's `--enable-wasm64-32bit-address-limit`: the C
+code keeps 64-bit pointers but Emscripten lowers the output to wasm32 with a
+4 GB address limit, so it runs on engines without Memory64 (Safari, Chrome
+before 133, Firefox before 134) as well as on current ones. Dropping the flag
+gives a true wasm64 binary that needs Memory64 support.
 
 ## Notes
 

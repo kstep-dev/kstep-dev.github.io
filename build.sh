@@ -86,7 +86,7 @@ qemu() {
     [ "$(git -C "$src" rev-parse HEAD)" = "$QEMU_COMMIT" ] || { git -C "$src" fetch -q --depth 50 origin "$QEMU_BRANCH"; git -C "$src" checkout -q "$QEMU_COMMIT"; }
   fi
   mkdir -p "$src/build" && cd "$src/build"
-  emconfigure ../configure --static --cpu=wasm64 --cross-prefix= \
+  emconfigure ../configure --static --cpu=wasm64 --enable-wasm64-32bit-address-limit --cross-prefix= \
     --target-list=x86_64-softmmu \
     --enable-system --disable-user --disable-tools --disable-docs \
     --without-default-features --with-coroutine=wasm \
