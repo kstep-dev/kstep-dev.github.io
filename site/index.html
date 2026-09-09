@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>kSTEP</title>
+<title>kSTEP: Kernel Scheduler Test and Evaluation Platform</title>
 <style>
   :root { color-scheme: light dark; }
   body { margin: 0 auto; padding: 0 1rem 3rem; max-width: 60rem; font: 15px/1.5 system-ui, sans-serif; }
@@ -43,12 +43,12 @@
 <body>
 <header>
   <div>
-    <h1>kSTEP <small>Kernel Scheduler Test and Evaluation Platform</small></h1>
+    <h1>kSTEP: Kernel Scheduler Test and Evaluation Platform</h1>
   </div>
   <nav><a href="assets/paper-osdi26.pdf">Paper</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
 </header>
 
-<h2>Reproduce a scheduler bug in your browser</h2>
+<h2>Reproduce a Linux kernel scheduler bug in your browser</h2>
 <p>Each row is a real Linux CPU scheduler bug with a kSTEP driver that triggers it.
 <b>buggy</b> boots the kernel from just before the fix, <b>fixed</b> the kernel with the fix.
 A run takes about ten seconds.</p>
@@ -71,6 +71,13 @@ A run takes about ten seconds.</p>
 
 <h2>How kSTEP works</h2>
 <figure><img src="figures/arch.svg" alt="kSTEP architecture"><figcaption>A driver program (kernel code, one per bug) declares a sequence of scheduler-invoking events: task creation, wakeups, sleeps, cgroup changes, ticks. The kSTEP module dispatches them on CPUs isolated from the rest of the system, with the scheduler clock and the tick under its control, so the unmodified scheduler runs the same code path it would in production and produces the same trace on every run. The trace above is that output; the plot compares it for the buggy and the fixed kernel.</figcaption></figure>
+<ul>
+  <li><b>Timing.</b> Logical time advances only when the driver ticks, so events can be placed inside transient windows a few microseconds wide.</li>
+  <li><b>Control.</b> Drivers create and steer tasks and cgroups, trigger kernel activities such as load balancing, and set CPU frequency and topology.</li>
+  <li><b>Determinism.</b> Mocked clocks, isolated CPUs and reset state make the same driver produce the same trace, so buggy and fixed kernels can be compared line by line.</li>
+  <li><b>Fidelity.</b> kSTEP never writes scheduler state directly; every state it reaches is reachable on a real system through the same code paths.</li>
+</ul>
+
 <h2>Paper</h2>
 <p><a href="assets/paper-osdi26.pdf">kSTEP: Characterization and Deterministic Testing of Linux CPU Scheduler Bugs</a>.
 Tingjia Cao, Shawn (Wanxiang) Zhong, Caeden Whitaker, Ke Han, Andrea C. Arpaci-Dusseau, Remzi H. Arpaci-Dusseau.
@@ -138,7 +145,7 @@ async function run(b, variant) {
   started = true;
   tbody.querySelectorAll('tr').forEach(tr => tr.classList.toggle('selected', tr.dataset.bug === b.name));
   con.textContent = ''; out.textContent = ''; con.classList.remove('idle'); out.classList.remove('idle');
-  $('runtitle').textContent = `${b.title}, ${variant} kernel (${b.name}, ${b.num_cpus} vCPUs, ${b.mem_mb} MB)`;
+  $('runtitle').textContent = `${b.title}, ${variant} kernel`;
   $('plot').hidden = true;
   if (b.plot) { $('plot').onload = () => { $('plot').hidden = false; }; $('plot').onerror = () => { $('plot').hidden = true; }; $('plot').src = b.plot; }
   $('runbox').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -159,7 +166,25 @@ async function run(b, variant) {
   try {
     setStatus('fetching images');
     const image = b.images[variant];
-    const get = (u) => fetch(u).then(r => { if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`); return r.arrayBuffer(); });
+    // Downloads report progress as they stream in (kernel, initramfs, BIOS; the wasm itself is
+    // loaded by the module import and not counted).
+    const progress = {};
+    const report = () => {
+      const p = Object.values(progress), got = p.reduce((a, x) => a + x[0], 0), total = p.reduce((a, x) => a + x[1], 0);
+      setStatus(`fetching images ${(got / 1048576).toFixed(1)}${total ? ' / ' + (total / 1048576).toFixed(1) : ''} MB`);
+    };
+    const get = async (u) => {
+      const r = await fetch(u);
+      if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`);
+      const total = +r.headers.get('content-length') || 0, chunks = []; let got = 0;
+      for (const reader = r.body.getReader(); ;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value); got += value.length; progress[u] = [got, total]; report();
+      }
+      const buf = new Uint8Array(got); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.length; }
+      return buf.buffer;
+    };
     const [kernel, rootfs, { default: Module }, ...bios] = await Promise.all([
       get(`${base}/${image}/kernel`), get(`${base}/${image}/rootfs.cpio`),
       import(`./qemu/qemu-system-x86_64.js?v=${V}`), ...BIOS.map(f => get(`qemu/${f}?v=${V}`)),
