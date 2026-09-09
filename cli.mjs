@@ -34,7 +34,7 @@ for (let i = 0; i < ticks; i++) { await cmd('tick'); timeline.push((await cmd('c
 const glyph = (p) => p ? String(pids.indexOf(p) >= 0 ? pids.indexOf(p) : '?') : '.';
 console.log('tasks', pids.map((p, i) => `t${i}=${p}`).join(' '));
 for (let c = 0; c < cpus; c++) console.log(`cpu${c + 1}`.padEnd(6), timeline.map(t => glyph(t[c])).join(''));
-for (const pid of pids) { const s = await cmd(`stat ${pid}`); console.log(`stat ${pid}: runtime=${(s.sum_exec_runtime / 1e6).toFixed(1)}ms vruntime=${(s.vruntime / 1e6).toFixed(1)}ms weight=${s.weight}`); }
+for (const s of (await cmd('task')).tasks) console.log(`t${pids.indexOf(s.pid)} pid=${s.pid}: cpu=${s.cpu} runtime=${(s.sum_exec_runtime / 1e6).toFixed(1)}ms vruntime=${(s.vruntime / 1e6).toFixed(1)}ms`);
 await cmd('exit');
 console.error(`done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 process.exit(0);

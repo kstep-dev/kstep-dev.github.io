@@ -51,7 +51,7 @@ The timeline shows, per CPU, which task ran after each tick; the table lists the
     <option value="1">1/s</option><option value="2">2/s</option><option value="5" selected>5/s</option>
     <option value="10">10/s</option><option value="20">20/s</option><option value="0">max</option>
   </select>
-  <input id="cmd" placeholder="or type a command (create [cpu], pin <pid> <cpu> [cpu2], tick, balance [cpu], curr, tasks, stat <pid>, kill <pid>) and press Enter" disabled>
+  <input id="cmd" placeholder="or type a command (create [cpu], pin <pid> <cpu> [cpu2], tick, balance [cpu], curr, task [pid], kill <pid>) and press Enter" disabled>
   <span id="status">not booted</span>
 </div>
 <p class="hint" id="hint">Space ticks once; auto tick keeps ticking at the chosen rate until paused, and other commands still work in between. Tasks are labelled t0, t1, … in creation order; the kernel knows them by pid.</p>
@@ -60,7 +60,7 @@ The timeline shows, per CPU, which task ran after each tick; the table lists the
 <canvas id="timeline"></canvas>
 <div id="scroll"><div id="spacer"></div></div>
 
-<h2>Tasks <span>from <code>stat</code> after every tick</span></h2>
+<h2>Tasks <span>from <code>task</code> after every command</span></h2>
 <table id="tasks"><thead><tr><th></th><th>task</th><th>pid</th><th>state</th><th>on</th><th>nice</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th><th></th></tr></thead><tbody></tbody></table>
 
 <h2>Transcript <span><button id="copy">copy</button></span></h2>
@@ -158,23 +158,14 @@ function renderTasks() {
   }
 }
 
-// The kernel owns the task list: `tasks` says which of this session's tasks are still alive.
+// The kernel owns the task list: `task` returns every live task of the session with its
+// counters, in one round trip. Tasks not in the reply have exited.
 async function refresh() {
-  const live = (await cmd('tasks')).tasks;
-  for (const t of tasks) t.alive = live.includes(t.pid);
-  for (const t of tasks) if (t.alive) t.stat = await cmd(`stat ${t.pid}`);
+  const live = (await cmd('task')).tasks;
+  for (const t of tasks) { const s = live.find(x => x.pid === t.pid); t.alive = !!s; if (s) t.stat = s; }
   draw(); renderTasks(); setStatus(`tick ${timeline.length}, ${live.length} tasks`);
 }
 
-// ---- transport: one command in flight at a time, replies in order ----
-let send = null; const waiters = [];
-const append = (text, cls) => { const span = document.createElement('span'); if (cls) span.className = cls; span.textContent = text + '\n'; log.append(span); log.scrollTop = log.scrollHeight; };
-function cmd(line) {
-  return new Promise(resolve => {
-    waiters.push(resolve);
-    if (line !== null) { append('> ' + line); send(line); }
-  }).then(reply => { append(JSON.stringify(reply), reply.ok ? '' : 'err'); return reply; });
-}
 async function step() {                 // tick, then refresh what the page shows
   const r = await cmd('tick'); if (!r.ok) return;
   timeline.push((await cmd('curr')).curr);
