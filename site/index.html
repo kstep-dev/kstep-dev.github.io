@@ -37,6 +37,10 @@
   #bugs td div { line-height: 1.6; }
   pre .err { color: crimson; }
   pre .event { opacity: .6; }
+  #balancing-box { max-height: 11rem; overflow-y: auto; border-bottom: 1px solid color-mix(in srgb, GrayText 40%, transparent); }
+  #balancing th, #balancing td { text-align: left; padding: .15rem .5rem; }
+  #balancing thead th { position: sticky; top: 0; background: Canvas; }
+  #balancing td:first-child { width: 4rem; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -45,7 +49,6 @@
   <nav><a href="reproduce.html">Reproduce</a><a href="assets/paper-osdi26.pdf">Paper</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
 </header>
 <p>kSTEP runs the unmodified Linux CPU scheduler deterministically, one tick at a time, on CPUs it isolates. A Linux kernel boots below when the page loads, with kSTEP holding its scheduler clock. Nothing happens in it except what you ask for: create tasks, change their nice value or affinity, pause or kill them, pick the machine's topology, and advance the scheduler one tick at a time.</p>
-
 
 <h2>Machine <span>
   <label><input id="sockets" type="number" min="1" max="8" value="1" style="width:3rem"> sockets ×</label>
@@ -65,6 +68,10 @@
 
 <h2>Tasks <span><button id="create" hidden>create task</button></span></h2>
 <table id="tasks"><thead><tr><th></th><th>task</th><th>state</th><th>cpu</th><th>nice</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th><th>affinity</th><th></th></tr></thead><tbody></tbody></table>
+
+<h2>Load balancing <span id="lb-summary"></span></h2>
+<p class="hint">Every time a CPU's balancer looked for work (after <code>should_we_balance</code>) and every task migration, from the trace, newest last.</p>
+<div id="balancing-box"><table id="balancing"><thead><tr><th>tick</th><th>event</th></tr></thead><tbody></tbody></table></div>
 
 <div id="panes">
   <div class="pane"><h3>kSTEP trace</h3><pre id="log"></pre></div>
@@ -148,7 +155,7 @@ const balances = [];         // trace events in the tick they happened: {tick, c
 let ncpus = 1;
 const labelOf = (pid) => tasks.find(t => t.pid === pid)?.label ?? String(pid);
 // Colours are fixed per creation order, so a task keeps its colour in the timeline after it exits.
-const colorOf = (pid) => { const i = tasks.findIndex(t => t.pid === pid); return i < 0 ? 'gray' : `hsl(${(i * 67) % 360} 60% 50%)`; };
+const colorOf = (pid) => { const i = tasks.findIndex(t => t.pid === pid); return i < 0 ? 'gray' : `hsl(${(i * 67) % 360}, 60%, 50%)`; };   // comma syntax: Safari's canvas parser
 
 // ---- machine: sockets x clusters x cores x threads over CPUs 1..N (CPU 0 stays kSTEP's own) ----
 // kSTEP's spec is LEVEL=group|group;... with every online CPU in exactly one group per level.
@@ -189,7 +196,7 @@ function draw() {
   for (let cpu = 0; cpu < ncpus; cpu++) {
     bandTop.push(y);
     ctx.font = 'bold 11px system-ui'; ctx.fillStyle = fg; ctx.globalAlpha = 0.8; ctx.fillText(`cpu${cpu + 1}`, 2, y + ROW / 2); ctx.globalAlpha = 1;
-    ctx.fillStyle = 'color-mix(in srgb, GrayText 20%, transparent)';          // idle stretches
+    ctx.fillStyle = 'rgba(128, 128, 128, 0.2)';          // idle stretches (no color-mix: canvas parsers vary)
     for (let c = first; c < last; c++) if (!timeline[c][cpu]) ctx.fillRect(LABEL_W + (c - first) * CELL, y, CELL - 1, bandH(cpu) - BAND_GAP);
     ctx.font = '11px system-ui';
     rows[cpu].forEach((pid, r) => {
@@ -317,6 +324,25 @@ function renderTasks() {
   }
 }
 
+// ---- load balancing table: one row per trace event, capped, scrolled to the newest ----
+const LB_MAX = 200;
+let lbShown = 0;
+function renderBalances() {
+  const tb = $('balancing').querySelector('tbody');
+  for (; lbShown < balances.length; lbShown++) {
+    const b = balances[lbShown], tr = tb.insertRow();
+    tr.insertCell().textContent = b.tick;
+    tr.insertCell().textContent = b.pid
+      ? `${labelOf(b.pid)} migrated cpu${b.src} \u2192 cpu${b.cpu}`
+      : `cpu${b.cpu} ran the balancer${b.domain ? ` (${b.domain} domain)` : ''}, nothing moved yet`;
+    if (tb.rows.length > LB_MAX) tb.deleteRow(0);
+  }
+  const runs = balances.filter(b => !b.pid).length, moves = balances.length - runs;
+  $('lb-summary').textContent = balances.length ? `${runs} balancer run${runs === 1 ? '' : 's'}, ${moves} migration${moves === 1 ? '' : 's'}` : '';
+  const box = $('balancing-box');
+  if (box.scrollHeight - box.scrollTop - box.clientHeight < 40) box.scrollTop = box.scrollHeight;   // follow the tail unless scrolled up
+}
+
 // ---- transport: one command in flight at a time, replies in order ----
 let send = null; const waiters = [];
 const LOG_MAX = 2000;   // lines kept in the transcript
@@ -405,7 +431,11 @@ async function boot() {
           // one ordered stream: command replies ("ok") interleaved with trace events ("type")
           const o = JSON.parse(line);
           if ('ok' in o) waiters.shift()?.(o);
-          else if (o.type === 'load_balance' || o.type === 'migrate') { append(line, 'event'); balances.push({ tick: timeline.length, cpu: o.dst_cpu, pid: o.type === 'migrate' ? o.pid : 0 }); }
+          else if (o.type === 'load_balance' || o.type === 'migrate') {
+            append(line, 'event');
+            balances.push({ tick: timeline.length, cpu: o.dst_cpu, pid: o.type === 'migrate' ? o.pid : 0, src: o.src_cpu, domain: o.name });
+            renderBalances();
+          }
         }
       },
     });
