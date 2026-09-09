@@ -23,8 +23,11 @@
   @media (max-width: 900px) { #panes { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } }
   .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-left: 1px solid var(--line); }
   .pane:first-child { border-left: 0; }
-  .pane h2 { margin: 0; padding: .3rem 1rem; font-size: .75rem; font-weight: 600; color: var(--mute); text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; }
-  .pane h2 span { font-weight: 400; text-transform: none; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+  .pane h2 { margin: 0; padding: .3rem 1rem; font-size: .75rem; font-weight: 600; color: var(--mute); text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
+  .pane h2 span { display: flex; gap: .4rem; }
+  .pane h2 button { font-size: .7rem; padding: .1rem .5rem; text-transform: none; letter-spacing: 0; font-weight: 400; cursor: pointer; }
+  .pane h2 button:disabled { cursor: default; }
+  footer:empty, footer:has(#warn:empty) { display: none; }
   .pane pre { flex: 1; margin: 0; padding: .75rem 1rem; overflow: auto; background: var(--con); color: var(--confg); font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
   footer { display: flex; gap: 1rem; padding: .5rem 1rem; border-top: 1px solid var(--line); font-size: .8rem; color: var(--mute); align-items: center; }
   footer a { color: var(--accent); } footer a[hidden] { display: none; }
@@ -43,16 +46,10 @@
 </header>
 <main>
   <div id="panes">
-    <div class="pane"><h2>kernel console (qemu.log) <span id="n-console"></span></h2><pre id="console"></pre></div>
-    <div class="pane"><h2>driver output (kstep.jsonl) <span id="n-jsonl"></span></h2><pre id="jsonl"></pre></div>
+    <div class="pane"><h2>kernel console <span><button data-copy="console">copy</button><button data-save="console">download</button></span></h2><pre id="console"></pre></div>
+    <div class="pane"><h2>driver output <span><button data-copy="jsonl">copy</button><button data-save="jsonl">download</button></span></h2><pre id="jsonl"></pre></div>
   </div>
-  <footer>
-    <span id="warn"></span>
-    <span id="dl">results:</span>
-    <a id="dl-jsonl" hidden download="kstep.jsonl">kstep.jsonl</a>
-    <a id="dl-log" hidden download="qemu.log">qemu.log</a>
-    <a id="dl-cov" hidden download="kstep.cov">kstep.cov</a>
-  </footer>
+  <footer><span id="warn"></span></footer>
 </main>
 <!-- GitHub Pages cannot set COOP/COEP headers; this service worker adds them on reload. -->
 <script src="coi-serviceworker.min.js"></script>
@@ -82,12 +79,30 @@ const fill = () => {
 };
 $('kernel').onchange = fill; fill();
 
+// Copy / download act on the pane's current text.
+const files = { console: 'qemu.log', jsonl: 'kstep.jsonl' };
+document.querySelectorAll('.pane button').forEach(b => {
+  const id = b.dataset.copy || b.dataset.save;
+  b.disabled = true;
+  b.onclick = () => {
+    const text = $(id).textContent;
+    if (b.dataset.copy) {
+      navigator.clipboard.writeText(text).then(() => { b.textContent = 'copied'; setTimeout(() => b.textContent = 'copy', 1200); });
+    } else {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' })); a.download = files[id]; a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    }
+  };
+});
+const enableActions = (on) => document.querySelectorAll('.pane button').forEach(b => b.disabled = !on);
+
 let running = false;
 $('run').onclick = async () => {
   if (running) return;
   running = true; $('run').disabled = true;
-  for (const id of ['dl-jsonl', 'dl-log', 'dl-cov']) $(id).hidden = true;
-  con.textContent = ''; out.textContent = ''; $('n-console').textContent = ''; $('n-jsonl').textContent = '';
+  enableActions(false);
+  con.textContent = ''; out.textContent = '';
   const kernel = $('kernel').value, driver = $('driver').value.trim() || kernel.replace(/_(buggy|fixed)$/, '');
   const smp = Math.max(1, +$('smp').value || 2), mem = Math.max(128, +$('mem').value || 512);
   const t0 = performance.now();
@@ -107,8 +122,8 @@ $('run').onclick = async () => {
     // into lines and streamed into their panes as they complete.
     const chan = { 'kstep.jsonl': [], 'qemu.log': [], 'kstep.cov': [] };
     const panes = {
-      'qemu.log':    { el: con, count: $('n-console'), line: '', lines: 0, pending: '', timer: 0 },
-      'kstep.jsonl': { el: out, count: $('n-jsonl'),   line: '', lines: 0, pending: '', timer: 0 },
+      'qemu.log':    { el: con, line: '', lines: 0, pending: '', timer: 0 },
+      'kstep.jsonl': { el: out, line: '', lines: 0, pending: '', timer: 0 },
     };
     let resolveDone;
     const done = new Promise(r => { resolveDone = r; });
@@ -118,20 +133,17 @@ $('run').onclick = async () => {
       const atBottom = p.el.scrollHeight - p.el.scrollTop - p.el.clientHeight < 40;
       p.el.append(p.pending); p.pending = '';
       if (atBottom) p.el.scrollTop = p.el.scrollHeight;
-      p.count.textContent = `${p.lines} lines`;
     };
     const finish = (panic) => {
       Object.values(panes).forEach(flush);
-      for (const [f, id] of [['kstep.jsonl', 'dl-jsonl'], ['qemu.log', 'dl-log'], ['kstep.cov', 'dl-cov']]) {
-        const a = $(id); a.href = URL.createObjectURL(new Blob([new Uint8Array(chan[f])])); a.hidden = false;
-      }
+      enableActions(true);
       setStatus(panic ? 'kernel panic' : 'done', panic ? 'bad' : 'ok');
       resolveDone();
     };
     const onLine = (name, l) => {
       const p = panes[name];
       p.lines++; p.pending += l + '\n';
-      if (!p.timer) p.timer = setTimeout(() => { flush(p); if (name === 'qemu.log') setStatus(`running, ${p.lines} lines`); }, 50);
+      if (!p.timer) p.timer = setTimeout(() => { flush(p); if (name === 'qemu.log') setStatus('running'); }, 50);
       if (name === 'qemu.log' && (l.includes('Kernel panic') || l.includes('reboot: Restarting system')))
         finish(l.includes('Kernel panic'));
     };
