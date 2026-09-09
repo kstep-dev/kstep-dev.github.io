@@ -30,6 +30,7 @@
   .pane { min-width: 0; }   /* let grid cells shrink; long console lines scroll inside the pane */
   .pane h3 { font-size: .8rem; font-weight: 600; margin: 0 0 .25rem; display: flex; justify-content: space-between; align-items: center; }
   .pane h3 span button { margin-left: .3rem; }
+  .pane pre.idle { color: GrayText; white-space: pre-wrap; }
   .pane pre { margin: 0; height: 24rem; overflow: auto; max-width: 100%; padding: .5rem .7rem; border: 1px solid GrayText; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
   #plot { max-width: 100%; margin-top: .8rem; display: block; }
   figure { margin: 1.2rem 0; }
@@ -59,11 +60,11 @@ The same driver and trace format produce the plots in the paper. A run takes abo
   <tbody></tbody>
 </table>
 
-<div id="runbox" hidden>
-  <div id="runhead"><b id="runtitle"></b><span id="status">idle</span><button id="again" hidden>Run again</button></div>
+<div id="runbox">
+  <div id="runhead"><b id="runtitle">Nothing running yet: press buggy or fixed on a row above.</b><span id="status">idle</span><button id="again" hidden>Run again</button></div>
   <div id="panes">
-    <div class="pane"><h3>kernel console <span><button data-copy="console">copy</button><button data-save="console">download</button></span></h3><pre id="console"></pre></div>
-    <div class="pane"><h3>driver output <span><button data-copy="jsonl">copy</button><button data-save="jsonl">download</button></span></h3><pre id="jsonl"></pre></div>
+    <div class="pane"><h3>kernel console <span><button data-copy="console">copy</button><button data-save="console">download</button></span></h3><pre id="console" class="idle">The kernel boots here: SeaBIOS, then Linux with kSTEP's boot arguments, then the kSTEP module loads the driver. About ten seconds.</pre></div>
+    <div class="pane"><h3>driver output <span><button data-copy="jsonl">copy</button><button data-save="jsonl">download</button></span></h3><pre id="jsonl" class="idle">The driver's trace streams here, one JSON record per scheduler event; the same records the paper's plots are drawn from.</pre></div>
   </div>
   <img id="plot" hidden alt="buggy vs fixed trace plot from the paper's results">
 </div>
@@ -138,7 +139,8 @@ async function run(b, variant) {
   history.replaceState(null, '', '?' + new URLSearchParams({ bug: b.name, kernel: variant }));
   document.querySelectorAll('#bugs button').forEach(x => x.disabled = true);
   tbody.querySelectorAll('tr').forEach(tr => tr.classList.toggle('selected', tr.dataset.bug === b.name));
-  $('runbox').hidden = false; $('runtitle').textContent = `${b.title}, ${variant} kernel (${b.name}, ${b.num_cpus} vCPUs, ${b.mem_mb} MB)`;
+  con.textContent = ''; out.textContent = ''; con.classList.remove('idle'); out.classList.remove('idle');
+  $('runtitle').textContent = `${b.title}, ${variant} kernel (${b.name}, ${b.num_cpus} vCPUs, ${b.mem_mb} MB)`;
   if (b.plot) { $('plot').src = b.plot; $('plot').hidden = false; }
   $('runbox').scrollIntoView({ behavior: 'smooth', block: 'start' });
   const t0 = performance.now();
