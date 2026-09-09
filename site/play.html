@@ -36,7 +36,7 @@
   <nav><a href="./">Reproduce</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
 </header>
 <p>A Linux kernel runs below, with kSTEP holding its scheduler clock. Nothing happens until you say so:
-<code>create</code> adds a runnable task (on any CPU, or <code>create 2</code> for CPU 2 only), <code>pin</code> moves one, <code>kill</code> ends one, <code>tick</code> advances the scheduler by exactly one tick, <code>balance</code> runs load balancing now instead of waiting for its interval.
+<code>create</code> adds a runnable task (on any CPU, or <code>create 2</code> for CPU 2 only), <code>pin</code> moves one, <code>kill</code> ends one, <code>tick</code> advances the scheduler by exactly one tick.
 The timeline shows, per CPU, which task ran after each tick; the table lists the live tasks with their scheduler counters.</p>
 
 <div id="toolbar">
@@ -45,13 +45,12 @@ The timeline shows, per CPU, which task ran after each tick; the table lists the
     <select id="ncpus"><option>1</option><option>2</option><option>3</option><option>4</option></select> CPUs</label>
   <button class="verb" data-cmd="create" disabled>create</button>
   <button class="verb" data-ticks="1" disabled>tick</button>
-  <button class="verb" data-cmd="balance" disabled title="run load balancing on every CPU now, as if its interval had elapsed; the scheduler still decides whether anything moves">balance</button>
   <button id="auto" class="verb" disabled>auto tick</button>
   <select id="rate" class="verb" disabled title="ticks per second while auto ticking">
     <option value="1">1/s</option><option value="2">2/s</option><option value="5" selected>5/s</option>
     <option value="10">10/s</option><option value="20">20/s</option><option value="0">max</option>
   </select>
-  <input id="cmd" placeholder="or type a command (create [cpu], pin <pid> <cpu> [cpu2], tick, balance [cpu], curr, task [pid], kill <pid>) and press Enter" disabled>
+  <input id="cmd" placeholder="or type a command (create [cpu], pin <pid> <cpu> [cpu2], tick, curr, task [pid], kill <pid>) and press Enter" disabled>
   <span id="status">not booted</span>
 </div>
 <p class="hint" id="hint">Space ticks once; auto tick keeps ticking at the chosen rate until paused, and other commands still work in between. Tasks are labelled t0, t1, … in creation order; the kernel knows them by pid.</p>
