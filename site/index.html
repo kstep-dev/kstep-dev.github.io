@@ -55,14 +55,13 @@
   #bugs .run a { margin-right: .5rem; }
   figure { text-align: center; margin: .8rem 0; }
   figure img { max-width: 100%; }
-  pre { margin: 0; height: 12rem; overflow: auto; padding: .5rem .7rem; border: 1px solid GrayText; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+  #panes { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; margin-top: 1.4rem; }
+  @media (max-width: 800px) { #panes { grid-template-columns: 1fr; } }
+  .pane { min-width: 0; }   /* let grid cells shrink; long lines scroll inside the pane */
+  .pane h3 { font-size: .8rem; font-weight: 600; margin: 0 0 .25rem; }
+  pre { margin: 0; height: 14rem; overflow: auto; max-width: 100%; padding: .5rem .7rem; border: 1px solid GrayText; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
   pre .err { color: crimson; }
   pre .event { opacity: .6; }
-  details { margin-top: 1.2rem; }
-  details summary { cursor: pointer; font-weight: 600; font-size: 1rem; }
-  details summary .hint { font-weight: normal; font-size: .85rem; }
-  details pre { margin-top: .4rem; height: 14rem; }
-  #console { white-space: pre; }
   .hint { color: GrayText; }
 </style>
 </head>
@@ -74,15 +73,6 @@
 <p>kSTEP runs the unmodified Linux CPU scheduler deterministically, one tick at a time, on CPUs it isolates. A Linux kernel boots below when the page loads, with kSTEP holding its scheduler clock. Nothing happens in it except what you ask for: create tasks, change their nice value or affinity, pause or kill them, pick the machine's topology, and advance the scheduler one tick at a time.</p>
 
 
-<h2>Timeline <span><span id="clock" hidden><label><input id="speed" type="number" min="0" max="1000" step="10" value="20" style="width:4.2rem" title="ticks per second; 0 stops the clock"> ticks/s</label>
-  <button id="step" title="stop the clock and advance exactly one tick">step</button>
-  <span class="hint" title="trace events in that tick, on the destination CPU: hollow = its load balancer looked for work (after should_we_balance); filled = a task moved there, by balancing or wakeup placement">▽ balancer ran &nbsp;▼ task migrated</span></span></h2>
-<canvas id="timeline"></canvas>
-<div id="scroll"><div id="spacer"></div></div>
-
-<h2>Tasks <span><button id="create" hidden>create task</button></span></h2>
-<table id="tasks"><thead><tr><th></th><th>task</th><th>state</th><th>cpu</th><th>nice</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th><th>affinity</th><th></th></tr></thead><tbody></tbody></table>
-
 <h2>Machine <span>
   <label><input id="sockets" type="number" min="1" max="8" value="1" style="width:3rem"> sockets ×</label>
   <label><input id="clusters" type="number" min="1" max="8" value="1" style="width:3rem"> clusters ×</label>
@@ -93,8 +83,19 @@
 <div id="machine"></div>
 <p class="hint" id="cpu-hint"></p>
 
-<details><summary>kSTEP trace</summary><pre id="log"></pre></details>
-<details><summary>Kernel console</summary><pre id="console"></pre></details>
+<h2>Timeline <span><span id="clock" hidden><label><input id="speed" type="number" min="0" max="1000" step="10" value="20" style="width:4.2rem" title="ticks per second; 0 stops the clock"> ticks/s</label>
+  <button id="step" title="stop the clock and advance exactly one tick">step</button>
+  <span class="hint" title="trace events in that tick, on the destination CPU: hollow = its load balancer looked for work (after should_we_balance); filled = a task moved there, by balancing or wakeup placement">▽ balancer ran &nbsp;▼ task migrated</span></span></h2>
+<canvas id="timeline"></canvas>
+<div id="scroll"><div id="spacer"></div></div>
+
+<h2>Tasks <span><button id="create" hidden>create task</button></span></h2>
+<table id="tasks"><thead><tr><th></th><th>task</th><th>state</th><th>cpu</th><th>nice</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th><th>affinity</th><th></th></tr></thead><tbody></tbody></table>
+
+<div id="panes">
+  <div class="pane"><h3>kSTEP trace</h3><pre id="log"></pre></div>
+  <div class="pane"><h3>kernel console</h3><pre id="console"></pre></div>
+</div>
 
 <h2>Reproduced bugs</h2>
 <p>Each row is a real Linux CPU scheduler bug with a kSTEP driver that triggers it; the plot compares the trace of the buggy and the fixed kernel, and <b>run</b> boots that kernel in the browser.</p>
@@ -345,7 +346,7 @@ const LOG_MAX = 2000;   // lines kept in the transcript
 const append = (text, cls) => {
   const span = document.createElement('span'); if (cls) span.className = cls; span.textContent = text + '\n'; log.append(span);
   if (log.childElementCount > LOG_MAX) log.firstElementChild.remove();
-  if (log.checkVisibility()) log.scrollTop = log.scrollHeight;
+  log.scrollTop = log.scrollHeight;
 };
 function cmd(line) {
   return new Promise(resolve => { waiters.push(resolve); if (line !== null) { append('> ' + line); send(line); } })
