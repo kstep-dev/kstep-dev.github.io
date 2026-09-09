@@ -11,7 +11,6 @@
   h1 small { font-weight: normal; font-size: 1rem; color: GrayText; margin-left: .5rem; }
   h2 { font-size: 1.15rem; margin: 2rem 0 .5rem; border-bottom: 1px solid GrayText; padding-bottom: .2rem; }
   p, li { max-width: 46rem; }
-  .authors { color: GrayText; margin: 0 0 .3rem; }
   header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
   nav { margin-top: 1.4rem; white-space: nowrap; }
   nav a { margin-left: 1rem; }
@@ -35,8 +34,9 @@
   .pane pre.idle { color: GrayText; white-space: pre-wrap; }
   .pane pre { margin: 0; height: 24rem; overflow: auto; max-width: 100%; padding: .5rem .7rem; border: 1px solid GrayText; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
   #plot { display: block; max-height: 18rem; max-width: 100%; width: auto; margin: .6rem 0; }
-  figure { margin: 1.2rem 0; }
-  figure img { max-width: 100%; }
+  figure { margin: 1.2rem 0; text-align: center; }
+  figure img { max-width: 100%; max-height: 22rem; }
+  figcaption { text-align: left; }
   figcaption { font-size: .9rem; color: GrayText; }
   #warn { color: crimson; }
 </style>
@@ -45,7 +45,6 @@
 <header>
   <div>
     <h1>kSTEP <small>Kernel Scheduler Test and Evaluation Platform</small></h1>
-    <p class="authors">Tingjia Cao, Shawn (Wanxiang) Zhong, Caeden Whitaker, Ke Han, Andrea C. Arpaci-Dusseau, Remzi H. Arpaci-Dusseau. OSDI '26.</p>
   </div>
   <nav><a href="assets/paper-osdi26.pdf">Paper</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
 </header>
@@ -73,8 +72,17 @@ A run takes about ten seconds.</p>
 
 <h2>How kSTEP works</h2>
 <figure><img src="figures/arch.svg" alt="kSTEP architecture"><figcaption>A driver program (kernel code, one per bug) declares a sequence of scheduler-invoking events: task creation, wakeups, sleeps, cgroup changes, ticks. The kSTEP module dispatches them on CPUs isolated from the rest of the system, with the scheduler clock and the tick under its control, so the unmodified scheduler runs the same code path it would in production and produces the same trace on every run. The trace above is that output; the plot compares it for the buggy and the fixed kernel.</figcaption></figure>
-<p>Details, the bug study behind the driver set, and the coverage-guided fuzzer built on kSTEP are in the
-<a href="assets/paper-osdi26.pdf">OSDI '26 paper</a>.</p>
+<h2>Paper</h2>
+<p><a href="assets/paper-osdi26.pdf">kSTEP: Characterization and Deterministic Testing of Linux CPU Scheduler Bugs</a>.
+Tingjia Cao, Shawn (Wanxiang) Zhong, Caeden Whitaker, Ke Han, Andrea C. Arpaci-Dusseau, Remzi H. Arpaci-Dusseau.
+OSDI '26.</p>
+<p>We present an in-depth study of CPU scheduler bugs, covering both functional violations and
+misalignments between implementation and policy. Our study shows that these bugs are hard to
+observe and even harder to trigger. To close this gap, we introduce kSTEP. kSTEP gives testers
+fine-grained control over scheduler-invoking events and runs them deterministically on isolated
+CPUs. kSTEP produces noise-free, repeatable traces that expose subtle behavior. We then build a
+coverage-guided fuzzer on top of kSTEP for automated CPU scheduler testing. We demonstrate
+kSTEP's effectiveness by reproducing seven real-world scheduler bugs and uncovering four new ones.</p>
 
 <h2>Resources</h2>
 <ul>

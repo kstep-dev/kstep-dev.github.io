@@ -32,9 +32,10 @@ except FileNotFoundError:
     pass
 rows = {}
 for line in readme.splitlines():
-    m = re.match(r"\| \*\*\[(\w+)\.c\]\((\S+)\)\*\*(.*)", line)
+    m = re.match(r"\| \*\*\[[^\]]+\]\((\S+?)\)\*\*(.*)", line)   # link text varies; key on the driver path
     if not m: continue
-    name, path, rest = m.groups()
+    path, rest = m.groups()
+    name = re.sub(r"\.c$", "", path.rsplit("/", 1)[-1])
     links = [(l, u) for l, u in re.findall(r"\[([^\]]+)\]\((\S+?)\)", rest) if not l.endswith(".jsonl")]
     links = [(l, u if u.startswith("http") else f"https://github.com/kstep-dev/kstep/blob/master/{u}") for l, u in links]
     plot = re.search(r"!\[\]\((\S+?)\)", line) or re.search(r'src="(\S+?)"', line)
