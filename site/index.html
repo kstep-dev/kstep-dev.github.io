@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>kSTEP on wasm</title>
+<title>kSTEP</title>
 <style>
   :root { color-scheme: light dark; --fg: #1a1a1a; --bg: #f7f7f5; --mute: #6b6b6b; --line: #d9d9d4; --accent: #2b6cb0; --ok: #2f855a; --bad: #c53030; --con: #111; --confg: #d8d8d8; }
   @media (prefers-color-scheme: dark) { :root { --fg: #e6e6e3; --bg: #16161a; --mute: #9a9a9a; --line: #2e2e33; --accent: #63a4ff; --ok: #48bb78; --bad: #f56565; --con: #0b0b0d; --confg: #cfcfcf; } }
@@ -36,7 +36,7 @@
 </head>
 <body>
 <header>
-  <h1>kSTEP on wasm</h1>
+  <h1>kSTEP</h1>
   <label>kernel <select id="kernel"></select></label>
   <label>driver <input id="driver" type="text" value=""></label>
   <label>vCPUs <input id="smp" type="number" min="1" max="32" value="2"></label>
@@ -118,9 +118,8 @@ $('run').onclick = async () => {
     ]);
     const isol = smp > 2 ? `1-${smp - 1}` : '1';
     const boot = `rw nokaslr loglevel=7 sched_verbose isolcpus=nohz,managed_irq,${isol} irqaffinity=0 rcu_nocbs=${isol} nohz_full=${isol} init=/user panic=-1 console=ttyS0 tsc=nowatchdog -- driver=${driver}`;
-    // One byte collector per channel. The console and jsonl channels are also split
-    // into lines and streamed into their panes as they complete.
-    const chan = { 'kstep.jsonl': [], 'qemu.log': [], 'kstep.cov': [] };
+    // The console and jsonl channels are split into lines and streamed into their
+    // panes as bytes arrive; the coverage channel is discarded.
     const panes = {
       'qemu.log':    { el: con, line: '', lines: 0, pending: '', timer: 0 },
       'kstep.jsonl': { el: out, line: '', lines: 0, pending: '', timer: 0 },
@@ -148,7 +147,6 @@ $('run').onclick = async () => {
         finish(l.includes('Kernel panic'));
     };
     const sink = (name) => (byte) => {
-      chan[name].push(byte);
       const p = panes[name];
       if (!p) return;
       if (byte === 10) { onLine(name, p.line); p.line = ''; } else p.line += String.fromCharCode(byte);
