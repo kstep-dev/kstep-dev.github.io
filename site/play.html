@@ -348,7 +348,7 @@ async function boot() {
     setStatus('downloading');
     const get = (u) => fetch(u).then(r => { if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`); return r.arrayBuffer(); });
     const [kernel, rootfs, { default: Module }, ...bios] = await Promise.all([
-      get(`${play.base}/${play.image}/kernel`), get(`${play.base}/${play.image}/rootfs.cpio`),
+      get(`${play.base}/${play.image}/kernel?v=${V}`), get(`${play.base}/${play.image}/rootfs.cpio?v=${V}`),   // ?v busts the browser cache after a restage
       import(`./qemu/qemu-system-x86_64.js?v=${V}`), ...BIOS.map(f => get(`qemu/${f}?v=${V}`)),
     ]);
     setStatus('booting');
