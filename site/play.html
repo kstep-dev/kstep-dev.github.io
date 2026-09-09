@@ -36,11 +36,12 @@
   <nav><a href="./">Reproduce</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
 </header>
 <p>A Linux kernel runs below, with kSTEP holding its scheduler clock. Nothing happens until you say so:
-<code>create</code> adds a runnable task on CPU 1, <code>tick</code> advances the scheduler by exactly one tick.
+<code>create</code> adds a runnable task on CPU 1, <code>kill</code> ends one, <code>tick</code> advances the scheduler by exactly one tick.
 The timeline shows which task ran after each tick; the table shows each task's scheduler counters.</p>
 
 <div id="toolbar">
   <button id="boot">Boot</button>
+  <label class="hint">with <input id="ntasks" type="number" min="0" max="16" value="3" style="width:3.5rem"> tasks</label>
   <button class="verb" data-cmd="create" disabled>create</button>
   <button class="verb" data-ticks="1" disabled>tick</button>
   <button class="verb" data-ticks="10" disabled>tick ×10</button>
@@ -50,7 +51,7 @@ The timeline shows which task ran after each tick; the table shows each task's s
     <option value="1">1/s</option><option value="2">2/s</option><option value="5" selected>5/s</option>
     <option value="10">10/s</option><option value="20">20/s</option><option value="0">max</option>
   </select>
-  <input id="cmd" placeholder="or type a command (create, tick, curr, stat <pid>) and press Enter" disabled>
+  <input id="cmd" placeholder="or type a command (create, tick, curr, stat <pid>, kill <pid>) and press Enter" disabled>
   <span id="status">not booted</span>
 </div>
 <p class="hint" id="hint">Space ticks once; auto tick keeps ticking at the chosen rate until paused, and other commands still work in between. Tasks are labelled t0, t1, … in creation order; the kernel knows them by pid.</p>
@@ -60,7 +61,7 @@ The timeline shows which task ran after each tick; the table shows each task's s
 <div id="scroll"><div id="spacer"></div></div>
 
 <h2>Tasks <span>from <code>stat</code> after every tick</span></h2>
-<table id="tasks"><thead><tr><th>task</th><th>pid</th><th>state</th><th>on cpu</th><th>nice</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th></tr></thead><tbody></tbody></table>
+<table id="tasks"><thead><tr><th>task</th><th>pid</th><th>state</th><th>on cpu</th><th>nice</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th><th></th></tr></thead><tbody></tbody></table>
 
 <h2>Transcript <span><button id="copy">copy</button></span></h2>
 <pre id="log"></pre>
@@ -79,6 +80,7 @@ catch (e) { setStatus('data.json failed: ' + e.message, true); }
 const { BIOS, runKstep } = await import(`./kstep.mjs?v=${V}`);
 
 // ---- session state ----
+let busy = false;
 const tasks = [];            // [{pid, label, stat}] in creation order
 const timeline = [];         // pid current on CPU 1 after each tick (0 = idle)
 const labelOf = (pid) => tasks.find(t => t.pid === pid)?.label ?? (pid === 0 ? 'idle' : String(pid));
@@ -124,8 +126,12 @@ function renderTasks() {
   const ms = (ns) => ns === undefined ? '' : (ns / 1e6).toFixed(1);
   for (const t of tasks) {
     const s = t.stat ?? {}, tr = tb.insertRow();
-    for (const v of [t.label, t.pid, s.state === 0 ? 'runnable' : s.state, s.on_cpu ? 'yes' : '', s.nice, s.weight, ms(s.sum_exec_runtime), ms(s.vruntime), ms(s.deadline), ms(s.slice)])
+    const state = t.exited ? 'exited' : t.killed ? 'exiting' : s.state === 0 ? 'runnable' : s.state;
+    for (const v of [t.label, t.pid, state, s.on_cpu ? 'yes' : '', s.nice, s.weight, ms(s.sum_exec_runtime), ms(s.vruntime), ms(s.deadline), ms(s.slice)])
       tr.insertCell().textContent = v ?? '';
+    const cell = tr.insertCell();
+    if (!t.killed) { const b = document.createElement('button'); b.textContent = 'kill'; b.className = 'verb'; b.disabled = !send || busy;
+      b.onclick = () => run(async () => { if ((await cmd(`kill ${t.pid}`)).ok) { t.killed = true; renderTasks(); } }); cell.append(b); }
   }
 }
 
@@ -141,7 +147,11 @@ function cmd(line) {
 async function step() {                 // tick, then refresh what the page shows
   const r = await cmd('tick'); if (!r.ok) return;
   timeline.push((await cmd('curr')).pid);
-  for (const t of tasks) t.stat = await cmd(`stat ${t.pid}`);
+  for (const t of tasks) {
+    if (t.exited) continue;
+    const r = await cmd(`stat ${t.pid}`);
+    if (r.ok) t.stat = r; else if (t.killed) t.exited = true;
+  }
   draw(); renderTasks(); setStatus(`tick ${timeline.length}, ${tasks.length} tasks`);
 }
 async function create() {
@@ -151,7 +161,6 @@ async function create() {
   draw(); renderTasks(); setStatus(`tick ${timeline.length}, ${tasks.length} tasks`);
 }
 
-let busy = false;
 async function run(fn) {               // serialise UI actions
   if (busy || !send) return; busy = true;
   document.querySelectorAll('.verb, #cmd').forEach(e => e.disabled = true);
@@ -208,6 +217,7 @@ $('boot').onclick = async () => {
     send = r.send;
     await cmd(null);   // the driver's ready line
     setStatus(`ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+    for (let i = 0; i < +$('ntasks').value; i++) await create();
     document.querySelectorAll('.verb, #cmd').forEach(e => e.disabled = false);
     draw();
   } catch (e) { setStatus('error: ' + e.message, true); $('boot').disabled = false; }
