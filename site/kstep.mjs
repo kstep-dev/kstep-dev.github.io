@@ -5,6 +5,7 @@
 //   const { panic } = await done;
 //
 // files: { kernel, rootfs, bios: { 'bios-256k.bin': ..., } } as Uint8Array / ArrayBuffer.
+// wasmBinary (optional): the .wasm bytes, if the caller fetched them itself (e.g. to show progress).
 // onLine(channel, line) is called for every complete line, channel 'console' (kernel
 // console, chardev 0) or 'jsonl' (driver output, chardev 1); coverage (chardev 2) is
 // dropped. QEMU does not exit on guest reboot under Emscripten, so `done` resolves when
@@ -35,7 +36,7 @@ export function qemuArgs({ driver, smp, mem }) {
   ];
 }
 
-export async function runKstep(Module, { files, driver, smp, mem, onLine, locateFile, log = console.error }) {
+export async function runKstep(Module, { files, driver, smp, mem, onLine, locateFile, wasmBinary, log = console.error }) {
   let resolveDone;
   const done = new Promise(r => { resolveDone = r; });
   const channels = { 0: 'console', 1: 'jsonl' };
@@ -50,7 +51,7 @@ export async function runKstep(Module, { files, driver, smp, mem, onLine, locate
       resolveDone({ panic: line.includes('Kernel panic') });
   };
   const module = await Module({
-    locateFile,
+    locateFile, wasmBinary,   // wasmBinary: pass the .wasm bytes if fetched by the caller (for progress)
     arguments: qemuArgs({ driver, smp, mem }),
     preRun: [(m) => {
       m.FS.mkdir('/bios');
