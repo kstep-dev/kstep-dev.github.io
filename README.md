@@ -74,16 +74,19 @@ The wasm traces match native QEMU of the same generation byte for byte. The
 published `sync_wakeup` result was made with QEMU 8.2 and differs in one step,
 so that trace depends on the emulator version rather than on wasm.
 
-## Known issue: kSTEP init race under slow emulation
+## Resolved: x86 init panic under slow emulation
 
-x86_64 images occasionally panic at module load with a NULL dereference in
-`hrtimer_active` from `kstep_tick_init`. Cause: kSTEP cancels each CPU's
-`tick_sched.sched_timer`, which the kernel only initializes once that CPU
-switches to high-resolution tick mode after the `tsc` clocksource replaces
-`tsc-early`. At 6-20x slowdown the module can load before the isolated CPUs
-got there. It never happens natively, and it is not a JIT bug (it also
-reproduces with the JIT disabled, and native QEMU 11.1 traces match). The fix
-is in kSTEP (`kmod/tick.c`: wait for `sched_timer.base` before cancelling);
-images in the build repo predate it. Rebasing the JIT onto QEMU v11.1.0 was
-tried and works, but is shelved because that build is slower and therefore
-lost this race more often.
+Images built before 2026-09-09 occasionally panic at module load with a NULL
+dereference in `hrtimer_active` from `kstep_tick_init`, always together with
+`APIC timer disabled due to verification failure` in the boot log. Cause:
+kSTEP's x86 config (allnoconfig-based) lacked `CONFIG_X86_PM_TIMER`, so the
+kernel verified the LAPIC timer calibration against jiffies, a 100-tick window
+with a 2-tick tolerance that a 6-20x slower guest fails now and then. With the
+LAPIC timer marked broken no CPU ever enters high-res tick mode, the per-CPU
+`sched_timer` is never initialized, and kSTEP cancels it anyway. Native QEMU
+never hit it, and it is not a JIT bug (same rate with the JIT disabled). Fix
+in kSTEP: `CONFIG_X86_PM_TIMER=y` in `linux/config.kstep.x86_64`, which makes
+the kernel calibrate against the ACPI PM timer and skip the jiffies check
+(8/8 clean runs here, and ~15% faster boot); `kmod/tick.c` additionally waits
+for the timer to exist and panics with a clear message otherwise. Images in
+the build repo need a rebuild to pick this up.
