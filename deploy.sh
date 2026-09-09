@@ -22,8 +22,10 @@ import reproduce
 version, base, *names = sys.argv[1:]
 bugs = {b.name: b for b in reproduce.BUGS + getattr(reproduce, "BUGS_EXTRA", [])}
 out = []
+MAX_MEM_MB = 1024   # fits the 2 GB wasm heap; long_balance (4096 MB) is left out
 for n in names:
     b = bugs.get(re.sub(r"_(buggy|fixed)$", "", n))
+    if b and b.mem_mb > MAX_MEM_MB: continue
     out.append({"name": n, "driver": b.name if b else n, "num_cpus": b.num_cpus if b else 2, "mem_mb": b.mem_mb if b else 512})
 print(json.dumps({"version": version, "base": base, "kernels": out}, indent=1))
 PY
