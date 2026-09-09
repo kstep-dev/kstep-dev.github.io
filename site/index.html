@@ -78,6 +78,13 @@ const fill = () => {
   warn.textContent = k.mem_mb > 1024 ? `reproduce.py uses ${k.mem_mb} MB for this bug; the wasm heap allows at most 1024 MB.` : '';
 };
 $('kernel').onchange = fill; fill();
+// Restore the last run's settings from the URL (written on Run), so a reload keeps them
+// and a URL can be shared.
+{
+  const q = new URLSearchParams(location.search);
+  if (q.get('kernel') && kernels.some(k => k.name === q.get('kernel'))) { $('kernel').value = q.get('kernel'); fill(); }
+  for (const f of ['driver', 'smp', 'mem']) if (q.get(f)) $(f).value = q.get(f);
+}
 
 // Copy / download act on the pane's current text.
 const files = { console: 'qemu.log', jsonl: 'kstep.jsonl' };
@@ -105,6 +112,7 @@ $('run').onclick = async () => {
   con.textContent = ''; out.textContent = '';
   const kernel = $('kernel').value, driver = $('driver').value.trim() || kernel.replace(/_(buggy|fixed)$/, '');
   const smp = Math.max(1, +$('smp').value || 2), mem = Math.max(128, +$('mem').value || 512);
+  history.replaceState(null, '', '?' + new URLSearchParams({ kernel, driver, smp, mem }));
   const t0 = performance.now();
   const setStatus = (s, cls = '') => { status.textContent = `${((performance.now() - t0) / 1000).toFixed(1)}s  ${s}`; status.className = cls; };
 
@@ -181,8 +189,9 @@ $('run').onclick = async () => {
   } catch (e) {
     setStatus('error: ' + e.message, 'bad'); console.error(e);
   }
-  // The QEMU instance does not exit cleanly under Emscripten; reload to run again.
-  $('run').textContent = 'Reload to run again';
+  // The QEMU instance does not exit cleanly under Emscripten, so a new run reloads the
+  // page; the settings survive via the URL.
+  $('run').textContent = 'Run again';
   $('run').disabled = false; $('run').onclick = () => location.reload();
 };
 </script>
