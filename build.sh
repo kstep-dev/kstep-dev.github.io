@@ -93,6 +93,10 @@ qemu() {
   # upstream). 1 GB is plenty: a run touches ~0.6 GB, and smaller reservations work on more
   # browsers (phones, Safari).
   sed -i 's/-sTOTAL_MEMORY=2GB/-sTOTAL_MEMORY=1GB/' "$src/configs/meson/emscripten.txt"
+  # The JIT compiles a translation block to wasm after it has run INSTANTIATE_NUM times in the
+  # interpreter (1500 upstream). kSTEP runs are short, so most time goes to interpreting boot
+  # code: 300 cut a run from 7.2 s to 6.0 s here (50: 5.6 s, but many more wasm modules).
+  sed -i 's/^#define INSTANTIATE_NUM .*/#define INSTANTIATE_NUM 300/' "$src/tcg/wasm64.c"
   mkdir -p "$src/build" && cd "$src/build"
   emconfigure ../configure --static --cpu=wasm64 --enable-wasm64-32bit-address-limit --cross-prefix= \
     --target-list=x86_64-softmmu \
