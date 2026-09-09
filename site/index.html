@@ -129,13 +129,13 @@ document.querySelectorAll('.pane button').forEach(b => {
 });
 const enableActions = (on) => document.querySelectorAll('.pane button').forEach(b => b.disabled = !on);
 
-// QEMU cannot be restarted inside the page (it never exits under Emscripten), so once a run
-// has started, choosing another bug reloads the page and starts it from sessionStorage.
+// QEMU cannot be stopped or restarted inside the page (it never exits under Emscripten), so once
+// a run has started, choosing another bug (even mid-run) reloads the page, which ends the current
+// QEMU, and starts the new one from sessionStorage.
 let started = false;
 async function run(b, variant) {
   if (started) { sessionStorage.setItem('kstep.run', JSON.stringify({ bug: b.name, variant })); location.reload(); return; }
   started = true;
-  document.querySelectorAll('#bugs button').forEach(x => x.disabled = true);
   tbody.querySelectorAll('tr').forEach(tr => tr.classList.toggle('selected', tr.dataset.bug === b.name));
   con.textContent = ''; out.textContent = ''; con.classList.remove('idle'); out.classList.remove('idle');
   $('runtitle').textContent = `${b.title}, ${variant} kernel (${b.name}, ${b.num_cpus} vCPUs, ${b.mem_mb} MB)`;
@@ -177,7 +177,6 @@ async function run(b, variant) {
   } catch (e) {
     setStatus('error: ' + e.message, 'bad'); console.error(e);
   }
-  document.querySelectorAll('#bugs button').forEach(x => x.disabled = false);
 }
 
 // A bug chosen after a previous run was handed over across the reload.
