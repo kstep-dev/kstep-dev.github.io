@@ -18,8 +18,8 @@
   #cmd { flex: 1; min-width: 12rem; font-family: ui-monospace, monospace; }
   #status { color: GrayText; font-variant-numeric: tabular-nums; }
   #status.bad { color: crimson; }
-  #timeline { display: block; width: 100%; height: 12rem; border: 1px solid GrayText; border-bottom: 0; }
-  #scroll { overflow-x: auto; overflow-y: hidden; height: 14px; border: 1px solid GrayText; border-top: 0; }
+  #timeline { display: block; width: 100%; border: 1px solid GrayText; border-bottom: 0; }
+  #scroll { overflow-x: auto; overflow-y: hidden; height: 18px; border: 1px solid GrayText; border-top: 0; }
   #spacer { height: 1px; }
   table { border-collapse: collapse; width: 100%; font-size: .9rem; font-variant-numeric: tabular-nums; }
   th, td { text-align: right; padding: .2rem .5rem; border-bottom: 1px solid color-mix(in srgb, GrayText 40%, transparent); }
@@ -36,7 +36,7 @@
   <nav><a href="./">Reproduce</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
 </header>
 <p>A Linux kernel runs below, with kSTEP holding its scheduler clock. Nothing happens until you say so:
-<code>create</code> adds a runnable task (on any CPU, or <code>create 2</code> for CPU 2 only), <code>pin</code> moves one, <code>kill</code> ends one, <code>tick</code> advances the scheduler by exactly one tick.
+<code>create</code> adds a runnable task (on any CPU, or <code>create 2</code> for CPU 2 only), <code>pin</code> moves one, <code>kill</code> ends one, <code>tick</code> advances the scheduler by exactly one tick, <code>balance</code> runs load balancing now instead of waiting for its interval.
 The timeline shows, per CPU, which task ran after each tick; the table lists the live tasks with their scheduler counters.</p>
 
 <div id="toolbar">
@@ -45,17 +45,18 @@ The timeline shows, per CPU, which task ran after each tick; the table lists the
     <select id="ncpus"><option>1</option><option>2</option><option>3</option><option>4</option></select> CPUs</label>
   <button class="verb" data-cmd="create" disabled>create</button>
   <button class="verb" data-ticks="1" disabled>tick</button>
+  <button class="verb" data-cmd="balance" disabled title="run load balancing on every CPU now, as if its interval had elapsed; the scheduler still decides whether anything moves">balance</button>
   <button id="auto" class="verb" disabled>auto tick</button>
   <select id="rate" class="verb" disabled title="ticks per second while auto ticking">
     <option value="1">1/s</option><option value="2">2/s</option><option value="5" selected>5/s</option>
     <option value="10">10/s</option><option value="20">20/s</option><option value="0">max</option>
   </select>
-  <input id="cmd" placeholder="or type a command (create [cpu], pin <pid> <cpu> [cpu2], tick, curr, tasks, stat <pid>, kill <pid>) and press Enter" disabled>
+  <input id="cmd" placeholder="or type a command (create [cpu], pin <pid> <cpu> [cpu2], tick, balance [cpu], curr, tasks, stat <pid>, kill <pid>) and press Enter" disabled>
   <span id="status">not booted</span>
 </div>
 <p class="hint" id="hint">Space ticks once; auto tick keeps ticking at the chosen rate until paused, and other commands still work in between. Tasks are labelled t0, t1, … in creation order; the kernel knows them by pid.</p>
 
-<h2>Timeline <span>one column per tick, one row per CPU, colour = task</span></h2>
+<h2>Timeline <span>one column per tick; a band per CPU, a row per task that ran there; scroll sideways for history</span></h2>
 <canvas id="timeline"></canvas>
 <div id="scroll"><div id="spacer"></div></div>
 
@@ -84,36 +85,51 @@ const tasks = [];            // [{pid, label, stat}] in creation order
 const timeline = [];         // per tick: [pid on CPU 1, pid on CPU 2, ...] (0 = idle)
 let ncpus = 1;
 // Colours are fixed per creation order, so a task keeps its colour in the timeline after it exits.
+const labelOf = (pid) => tasks.find(t => t.pid === pid)?.label ?? String(pid);
 const colorOf = (pid) => { const i = tasks.findIndex(t => t.pid === pid); return i < 0 ? 'gray' : `hsl(${(i * 67) % 360} 60% 50%)`; };
 
 // Fixed-width columns; when the run is longer than the canvas, the view follows the latest
 // ticks (a horizontal scrollbar under the canvas lets you look back). Column width does not
 // shrink, so a slice always looks like a slice.
-const CELL = 8, LABEL_W = 44;
+const CELL = 8, LABEL_W = 48;
 const scroller = $('scroll');
 let follow = true;
 scroller.onscroll = () => { follow = scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 2; };
+const ROW = 16, BAND_GAP = 6;
 function draw() {
-  const ctx = canvas.getContext('2d'), dpr = devicePixelRatio || 1;
-  const W = canvas.clientWidth, H = canvas.clientHeight;
+  // rows[cpu] = pids in order of first appearance on that CPU
+  const rows = Array.from({ length: ncpus }, () => []);
+  for (const t of timeline) t.forEach((pid, cpu) => { if (pid && !rows[cpu].includes(pid)) rows[cpu].push(pid); });
+  const bandH = (cpu) => Math.max(1, rows[cpu].length) * ROW + BAND_GAP;
+  const H = rows.reduce((a, _, cpu) => a + bandH(cpu), 0) + 16;
+  canvas.style.height = `${H}px`;
+  const ctx = canvas.getContext('2d'), dpr = devicePixelRatio || 1, W = canvas.clientWidth;
   canvas.width = W * dpr; canvas.height = H * dpr; ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
-  const rowH = Math.min(28, (H - 16) / ncpus);
   const visible = Math.floor((W - LABEL_W - 4) / CELL);
-  // scrollbar bookkeeping: the spacer is as wide as the whole run
   $('spacer').style.width = `${Math.max(timeline.length * CELL + LABEL_W, W)}px`;
   if (follow) scroller.scrollLeft = scroller.scrollWidth;
   const first = Math.max(0, Math.min(Math.round(scroller.scrollLeft / CELL), timeline.length - visible));
   const fg = getComputedStyle(document.body).color;
-  ctx.font = '12px system-ui'; ctx.textBaseline = 'middle';
+  ctx.textBaseline = 'middle';
+  let y = 2;
   for (let cpu = 0; cpu < ncpus; cpu++) {
-    const y = 2 + cpu * rowH;
-    ctx.fillStyle = fg; ctx.globalAlpha = 0.7; ctx.fillText(`cpu${cpu + 1}`, 2, y + rowH / 2); ctx.globalAlpha = 1;
-    for (let c = first; c < Math.min(timeline.length, first + visible); c++) {
-      const pid = timeline[c][cpu];
-      ctx.fillStyle = pid ? colorOf(pid) : 'color-mix(in srgb, GrayText 25%, transparent)';
-      ctx.fillRect(LABEL_W + (c - first) * CELL, y + 1, CELL - 1, rowH - 2);
-    }
+    // band label and the band's idle stretches (no task current on this CPU at that tick)
+    ctx.font = 'bold 11px system-ui'; ctx.fillStyle = fg; ctx.globalAlpha = 0.8; ctx.fillText(`cpu${cpu + 1}`, 2, y + ROW / 2); ctx.globalAlpha = 1;
+    ctx.fillStyle = 'color-mix(in srgb, GrayText 20%, transparent)';
+    for (let c = first; c < Math.min(timeline.length, first + visible); c++)
+      if (!timeline[c][cpu]) ctx.fillRect(LABEL_W + (c - first) * CELL, y, CELL - 1, bandH(cpu) - BAND_GAP);
+    // one row per task that ran here
+    ctx.font = '11px system-ui';
+    rows[cpu].forEach((pid, r) => {
+      const ry = y + r * ROW;
+      ctx.fillStyle = fg; ctx.globalAlpha = 0.7; ctx.fillText(labelOf(pid), LABEL_W - 4 - ctx.measureText(labelOf(pid)).width, ry + ROW / 2); ctx.globalAlpha = 1;
+      ctx.fillStyle = colorOf(pid);
+      for (let c = first; c < Math.min(timeline.length, first + visible); c++)
+        if (timeline[c][cpu] === pid) ctx.fillRect(LABEL_W + (c - first) * CELL, ry + 1, CELL - 1, ROW - 2);
+    });
+    y += bandH(cpu);
+    if (cpu < ncpus - 1) { ctx.strokeStyle = fg; ctx.globalAlpha = 0.25; ctx.beginPath(); ctx.moveTo(0, y - BAND_GAP / 2); ctx.lineTo(W, y - BAND_GAP / 2); ctx.stroke(); ctx.globalAlpha = 1; }
   }
   // tick numbers every 10 columns along the bottom edge
   ctx.fillStyle = fg; ctx.globalAlpha = 0.5; ctx.font = '10px system-ui';
@@ -122,6 +138,8 @@ function draw() {
   ctx.globalAlpha = 1;
 }
 scroller.addEventListener('scroll', draw);
+// Wheel / trackpad over the canvas scrolls the timeline too (the scrollbar below is thin).
+canvas.addEventListener('wheel', (e) => { e.preventDefault(); scroller.scrollLeft += (e.deltaX || e.deltaY); }, { passive: false });
 addEventListener('resize', draw);
 
 function renderTasks() {
@@ -177,7 +195,8 @@ async function run(fn) {               // serialise UI actions
   busy = false;
 }
 document.querySelectorAll('.verb[data-cmd], .verb[data-ticks]').forEach(b => b.onclick = () => run(async () => {
-  if (b.dataset.cmd) return create();
+  if (b.dataset.cmd === 'create') return create();
+  if (b.dataset.cmd) { await cmd(b.dataset.cmd); return refresh(); }
   for (let i = 0; i < +b.dataset.ticks; i++) await step();
 }));
 
