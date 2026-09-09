@@ -21,6 +21,7 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 | `deploy.sh` | writes `site/data.json` (the bug table from kSTEP's `reproduce.py` and README, image URLs, version stamp) and force-pushes `site/` as the orphan `gh-pages` branch |
 | `serve.sh` | same `data.json`, served locally with `python3 -m http.server` |
 | `run.mjs` | the same run, headless under Node (>= 20): for timing and for comparing traces against native QEMU |
+| `cli.mjs` | drives kSTEP's `cli` driver (kmod/cli) over a fourth serial port: the interactive round-robin demo, headless |
 
 `KSTEP_DIR` is the kSTEP checkout; it defaults to `../..` (this repo as kSTEP's
 `docs/website` submodule) or `../kstep`. Everything else generated lives in `build/`.

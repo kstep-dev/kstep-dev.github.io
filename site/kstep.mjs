@@ -6,6 +6,9 @@
 //
 // files: { kernel, rootfs, bios: { 'bios-256k.bin': ..., } } as Uint8Array / ArrayBuffer.
 // wasmBinary (optional): the .wasm bytes, if the caller fetched them itself (e.g. to show progress).
+// cli (optional): if true, a fourth serial port (/dev/ttyS3 in the guest) is wired to an
+// in-page device: `send(line)` on the returned object queues a command line for the guest, and
+// every line the guest writes arrives as onLine('cli', line). Used with kSTEP's `cli` driver.
 // onLine(channel, line) is called for every complete line, channel 'console' (kernel
 // console, chardev 0) or 'jsonl' (driver output, chardev 1); coverage (chardev 2) is
 // dropped. QEMU does not exit on guest reboot under Emscripten, so `done` resolves when
@@ -23,7 +26,7 @@ export function bootArgs({ driver, smp }) {
     `tsc_early_khz=1000000 -- driver=${driver}`;
 }
 
-export function qemuArgs({ driver, smp, mem }) {
+export function qemuArgs({ driver, smp, mem, cli = false }) {
   return [
     '-smp', String(smp), '-cpu', 'max', '-m', `${mem}M`, '-L', '/bios',
     '-accel', 'tcg,tb-size=64,thread=multi',
@@ -33,14 +36,19 @@ export function qemuArgs({ driver, smp, mem }) {
     '-chardev', 'file,id=c0,path=/dev/kstep0', '-serial', 'chardev:c0',
     '-chardev', 'file,id=c1,path=/dev/kstep1', '-serial', 'chardev:c1',
     '-chardev', 'file,id=c2,path=/dev/kstep2', '-serial', 'chardev:c2',
+    // A pipe chardev on a single path is opened read-write; the device node's poll op tells
+    // QEMU when a command is waiting, so the guest can read as well as write.
+    ...(cli ? ['-chardev', 'pipe,id=c3,path=/dev/kstep3', '-serial', 'chardev:c3'] : []),
   ];
 }
 
-export async function runKstep(Module, { files, driver, smp, mem, onLine, locateFile, wasmBinary, log = console.error }) {
+export async function runKstep(Module, { files, driver, smp, mem, onLine, locateFile, wasmBinary, cli = false, log = console.error }) {
   let resolveDone;
   const done = new Promise(r => { resolveDone = r; });
-  const channels = { 0: 'console', 1: 'jsonl' };
-  const lines = { console: '', jsonl: '' };
+  const channels = { 0: 'console', 1: 'jsonl', 3: 'cli' };
+  const lines = { console: '', jsonl: '', cli: '' };
+  const inq = [];   // bytes queued for the guest's ttyS3
+  const send = (line) => { for (const b of new TextEncoder().encode(line + '\n')) inq.push(b); };
   const sink = (i) => (byte) => {
     const ch = channels[i];
     if (!ch) return;
@@ -52,16 +60,34 @@ export async function runKstep(Module, { files, driver, smp, mem, onLine, locate
   };
   const module = await Module({
     locateFile, wasmBinary,   // wasmBinary: pass the .wasm bytes if fetched by the caller (for progress)
-    arguments: qemuArgs({ driver, smp, mem }),
+    arguments: qemuArgs({ driver, smp, mem, cli }),
     preRun: [(m) => {
       m.FS.mkdir('/bios');
       for (const [name, data] of Object.entries(files.bios)) m.FS.writeFile(`/bios/${name}`, new Uint8Array(data));
       m.FS.writeFile('/kernel', new Uint8Array(files.kernel));
       m.FS.writeFile('/rootfs.cpio', new Uint8Array(files.rootfs));
       for (let i = 0; i < 3; i++) m.FS.createDevice('/dev', `kstep${i}`, null, sink(i));
+      if (cli) {
+        // Bidirectional device for the command channel. FS ops run on the main thread (QEMU's
+        // thread is proxied to it), so the queue is plain JS state.
+        const out = sink(3), dev = m.FS.makedev(64, 3);
+        m.FS.registerDevice(dev, {
+          open(stream) { stream.seekable = false; },
+          close() {},
+          read(stream, buffer, offset, length) {
+            let n = 0;
+            while (n < length && inq.length) buffer[offset + n++] = inq.shift();
+            if (n === 0) throw new m.FS.ErrnoError(6);   // EAGAIN: nothing queued
+            return n;
+          },
+          write(stream, buffer, offset, length) { for (let i = 0; i < length; i++) out(buffer[offset + i]); return length; },
+          poll() { return (inq.length ? 1 : 0) | 4; },  // POLLIN when a command is queued, always POLLOUT
+        });
+        m.FS.mkdev('/dev/kstep3', 0o666, dev);
+      }
     }],
     print: (s) => log('[qemu] ' + s),
     printErr: (s) => { if (!s.includes('unsupported syscall')) log('[qemu] ' + s); },
   });
-  return { module, done };
+  return { module, done, send };
 }
