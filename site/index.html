@@ -170,19 +170,21 @@ async function run(b, variant) {
     }
   };
   try {
-    setStatus('fetching images');
+    setStatus('downloading');
     const image = b.images[variant];
-    // Downloads report progress as they stream in (kernel, initramfs, BIOS; the wasm itself is
-    // loaded by the module import and not counted).
+    // Every download (QEMU wasm, kernel, initramfs, BIOS) streams in with progress. A total is
+    // only shown when all sizes are known and not compressed on the wire.
     const progress = {};
     const report = () => {
-      const p = Object.values(progress), got = p.reduce((a, x) => a + x[0], 0), total = p.reduce((a, x) => a + x[1], 0);
-      setStatus(`fetching images ${(got / 1048576).toFixed(1)}${total ? ' / ' + (total / 1048576).toFixed(1) : ''} MB`);
+      const p = Object.values(progress), got = p.reduce((a, x) => a + x[0], 0);
+      const total = p.every(x => x[1]) ? p.reduce((a, x) => a + x[1], 0) : 0;
+      setStatus(`downloading ${(got / 1048576).toFixed(1)}${total ? ' / ' + (total / 1048576).toFixed(1) : ''} MB`);
     };
     const get = async (u) => {
       const r = await fetch(u);
       if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`);
-      const total = +r.headers.get('content-length') || 0, chunks = []; let got = 0;
+      const enc = r.headers.get('content-encoding');
+      const total = enc && enc !== 'identity' ? 0 : +r.headers.get('content-length') || 0, chunks = []; let got = 0;
       for (const reader = r.body.getReader(); ;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -191,15 +193,15 @@ async function run(b, variant) {
       const buf = new Uint8Array(got); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.length; }
       return buf.buffer;
     };
-    const [kernel, rootfs, { default: Module }, ...bios] = await Promise.all([
-      get(`${base}/${image}/kernel`), get(`${base}/${image}/rootfs.cpio`),
+    const [wasmBinary, kernel, rootfs, { default: Module }, ...bios] = await Promise.all([
+      get(`qemu/qemu-system-x86_64.wasm?v=${V}`), get(`${base}/${image}/kernel`), get(`${base}/${image}/rootfs.cpio`),
       import(`./qemu/qemu-system-x86_64.js?v=${V}`), ...BIOS.map(f => get(`qemu/${f}?v=${V}`)),
     ]);
     setStatus('starting qemu');
     const { done } = await runKstep(Module, {
       files: { kernel, rootfs, bios: Object.fromEntries(BIOS.map((f, i) => [f, bios[i]])) },
       driver: b.name, smp: b.num_cpus, mem: b.mem_mb,
-      locateFile: (f) => `qemu/${f}?v=${V}`,
+      locateFile: (f) => `qemu/${f}?v=${V}`, wasmBinary,
       onLine: (ch, line) => { panes[ch].pending += line + '\n'; if (!timer) timer = setTimeout(flush, 50); if (ch === 'console') setStatus('running'); },
     });
     const { panic } = await done;
