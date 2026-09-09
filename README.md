@@ -74,6 +74,16 @@ The wasm traces match native QEMU of the same generation byte for byte. The
 published `sync_wakeup` result was made with QEMU 8.2 and differs in one step,
 so that trace depends on the emulator version rather than on wasm.
 
+## Boot arguments specific to wasm
+
+`tsc_early_khz=1000000` is added to run.py's x86 arguments. QEMU on a wasm host
+has no cycle counter and synthesizes the guest TSC from the JS monotonic clock
+(nanoseconds, so 1 GHz), which is only as fine as `performance.now()`: 1 ms in
+Safari. The kernel's PIT/HPET TSC calibration then reads identical TSC values
+and divides by zero (`pit_hpet_ptimer_calibrate_cpu`, seen on 6.15-rc3).
+Giving it the frequency skips that calibration. Do not add this to run.py:
+under KVM the TSC runs at the host frequency.
+
 ## Resolved: x86 init panic under slow emulation
 
 Images built before 2026-09-09 occasionally panic at module load with a NULL

@@ -27,7 +27,11 @@ const qdir = path.join(W, 'site', 'qemu');
 
 const Module = (await import(path.join(qdir, 'qemu-system-x86_64.js'))).default;
 const isol = smp > 2 ? `1-${smp - 1}` : '1';
-const bootArgs = `rw nokaslr loglevel=7 sched_verbose isolcpus=nohz,managed_irq,${isol} irqaffinity=0 rcu_nocbs=${isol} nohz_full=${isol} init=/user panic=-1 console=ttyS0 tsc=nowatchdog -- driver=${driver}`;
+// Same boot arguments as kSTEP's run.py on x86_64, plus tsc_early_khz: QEMU's TSC on a
+// wasm host is derived from the JS clock (1 GHz, but as coarse as performance.now(),
+// 1 ms in Safari), and the kernel's PIT/HPET TSC calibration divides by zero when two
+// reads land in the same step. Telling it the frequency skips that calibration.
+const bootArgs = `rw nokaslr loglevel=7 sched_verbose isolcpus=nohz,managed_irq,${isol} irqaffinity=0 rcu_nocbs=${isol} nohz_full=${isol} init=/user panic=-1 console=ttyS0 tsc=nowatchdog tsc_early_khz=1000000 -- driver=${driver}`;
 const t0 = Date.now();
 const elapsed = () => ((Date.now() - t0) / 1000).toFixed(1);
 

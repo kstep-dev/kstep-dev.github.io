@@ -125,7 +125,9 @@ $('run').onclick = async () => {
       import(`./qemu/qemu-system-x86_64.js?v=${V}`), ...bios.map(f => get(`qemu/${f}?v=${V}`)),
     ]);
     const isol = smp > 2 ? `1-${smp - 1}` : '1';
-    const boot = `rw nokaslr loglevel=7 sched_verbose isolcpus=nohz,managed_irq,${isol} irqaffinity=0 rcu_nocbs=${isol} nohz_full=${isol} init=/user panic=-1 console=ttyS0 tsc=nowatchdog -- driver=${driver}`;
+    // run.py's x86 boot args plus tsc_early_khz=1000000: QEMU's TSC here is the JS clock
+    // (1 GHz, coarse in Safari), and the kernel's TSC calibration can divide by zero on it.
+    const boot = `rw nokaslr loglevel=7 sched_verbose isolcpus=nohz,managed_irq,${isol} irqaffinity=0 rcu_nocbs=${isol} nohz_full=${isol} init=/user panic=-1 console=ttyS0 tsc=nowatchdog tsc_early_khz=1000000 -- driver=${driver}`;
     // The console and jsonl channels are split into lines and streamed into their
     // panes as bytes arrive; the coverage channel is discarded.
     const panes = {
