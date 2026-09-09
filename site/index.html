@@ -49,9 +49,10 @@
   th, td { text-align: right; padding: .2rem .5rem; border-bottom: 1px solid color-mix(in srgb, GrayText 40%, transparent); }
   th:first-child, td:first-child { text-align: left; }
   #bugs th, #bugs td { text-align: left; vertical-align: middle; }
-  #bugs img { display: block; max-height: 11rem; max-width: 100%; }
-  #bugs td:nth-child(4) { width: 45%; }
-  #bugs td { white-space: normal; }
+  #bugs td { white-space: normal; padding: .5rem; }
+  #bugs td:last-child { width: 55%; text-align: center; }
+  #bugs img { max-height: 14rem; max-width: 100%; }
+  #bugs td div { line-height: 1.6; }
   #bugs .run a { margin-right: .5rem; }
   figure { text-align: center; margin: .8rem 0; }
   figure img { max-width: 100%; }
@@ -100,7 +101,7 @@
 <h2>Reproduced bugs</h2>
 <p>Each row is a real Linux CPU scheduler bug with a kSTEP driver that triggers it; the plot compares the trace of the buggy and the fixed kernel, and <b>run</b> boots that kernel in the browser.</p>
 <table id="bugs">
-  <thead><tr><th>Bug</th><th>Driver</th><th>Fix</th><th>Plot</th><th>Run</th></tr></thead>
+  <thead><tr><th>Bug, driver, fix, and run</th><th>Buggy vs fixed</th></tr></thead>
   <tbody></tbody>
 </table>
 
@@ -152,14 +153,17 @@ catch (e) { setStatus('data.json failed: ' + e.message, true); }
 {
   const link = (text, href) => { const a = document.createElement('a'); a.textContent = text; a.href = href; return a; };
   const tbody = $('bugs').querySelector('tbody');
+  // Two columns, like the table in the kSTEP README: everything about the bug on the left, the plot on the right.
+  const line = (label, ...nodes) => { const div = document.createElement('div'); if (label) { const b = document.createElement('b'); b.textContent = label + ': '; div.append(b); } div.append(...nodes); return div; };
   for (const b of bugs) {
     const tr = tbody.insertRow();
-    tr.insertCell().textContent = b.title;
-    const d = tr.insertCell(); if (b.driver_url) d.append(link(b.name + '.c', b.driver_url));
-    const f = tr.insertCell(); b.fixes.forEach((x, i) => { if (i) f.append(', '); f.append(link(x.label, x.url)); });
-    const pl = tr.insertCell(); if (b.plot) { const img = document.createElement('img'); img.src = b.plot; img.alt = ''; img.loading = 'lazy'; img.onerror = () => img.remove(); pl.append(img); }
-    const run = tr.insertCell(); run.className = 'run';
-    for (const v of ['buggy', 'fixed']) if (b.images[v]) run.append(link(v, `reproduce.html?bug=${b.name}&kernel=${v}`));
+    const info = tr.insertCell();
+    const title = document.createElement('b'); title.textContent = b.title; info.append(line('', title));
+    if (b.driver_url) info.append(line('Driver', link(b.name + '.c', b.driver_url)));
+    if (b.fixes.length) info.append(line('Fix', ...b.fixes.flatMap((x, i) => i ? [', ', link(x.label, x.url)] : [link(x.label, x.url)])));
+    const runs = ['buggy', 'fixed'].filter(v => b.images[v]).map(v => link(v, `reproduce.html?bug=${b.name}&kernel=${v}`));
+    if (runs.length) info.append(line('Run in browser', ...runs.flatMap((a, i) => i ? [', ', a] : [a])));
+    const pl = tr.insertCell(); if (b.plot) { const img = document.createElement('img'); img.src = b.plot; img.alt = `${b.title}: buggy vs fixed`; img.loading = 'lazy'; img.onerror = () => img.remove(); pl.append(img); }
   }
 }
 const { BIOS, runKstep } = await import(`./kstep.mjs?v=${V}`);
