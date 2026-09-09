@@ -147,7 +147,7 @@ const enableActions = (on) => document.querySelectorAll('.pane button').forEach(
 // QEMU, and starts the new one from sessionStorage.
 let started = false;
 async function run(b, variant) {
-  if (started) { sessionStorage.setItem('kstep.run', JSON.stringify({ bug: b.name, variant })); location.reload(); return; }
+  if (started) { sessionStorage.setItem('kstep.run', JSON.stringify({ bug: b.name, variant })); location.replace(location.pathname); return; }
   started = true;
   tbody.querySelectorAll('tr').forEach(tr => tr.classList.toggle('selected', tr.dataset.bug === b.name));
   con.textContent = ''; out.textContent = ''; con.classList.remove('idle'); out.classList.remove('idle');
@@ -212,14 +212,14 @@ async function run(b, variant) {
   }
 }
 
-// A bug chosen after a previous run was handed over across the reload.
+// Start a run right away if one was handed over across a reload (sessionStorage) or asked
+// for in the URL, e.g. ?bug=sync_wakeup&kernel=buggy (used by links in the kSTEP README).
 const pending = sessionStorage.getItem('kstep.run');
-if (pending) {
-  sessionStorage.removeItem('kstep.run');
-  const { bug, variant } = JSON.parse(pending);
-  const b0 = bugs.find(b => b.name === bug);
-  if (b0 && b0.images[variant]) run(b0, variant);
-}
+sessionStorage.removeItem('kstep.run');
+const q = new URLSearchParams(location.search);
+const want = pending ? JSON.parse(pending) : { bug: q.get('bug'), variant: q.get('kernel') };
+const b0 = bugs.find(b => b.name === want.bug);
+if (b0 && b0.images[want.variant]) run(b0, want.variant);
 </script>
 </body>
 </html>
