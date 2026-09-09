@@ -61,19 +61,19 @@ const V = '__VERSION__';   // replaced by deploy.sh; busts caches of the wasm/js
 const $ = (id) => document.getElementById(id);
 const con = $('console'), out = $('jsonl'), status = $('status'), warn = $('warn');
 
-// Preconditions: SharedArrayBuffer (COOP/COEP headers) and Memory64.
+// The one hard requirement: SharedArrayBuffer, which needs COOP/COEP headers. The
+// service worker above adds them and reloads once. (No Memory64 needed: the QEMU
+// binary is lowered to wasm32 via --enable-wasm64-32bit-address-limit.)
 if (typeof SharedArrayBuffer === 'undefined')
-  warn.textContent = 'SharedArrayBuffer unavailable: the page needs COOP/COEP headers (serve.py sets them; on static hosting the service worker adds them after one reload).';
-// The QEMU binary is lowered to wasm32 (QEMU's --enable-wasm64-32bit-address-limit), so no
-// Memory64 check is needed; SharedArrayBuffer (above) is the only hard requirement.
+  warn.textContent = 'SharedArrayBuffer unavailable; reload once so the service worker can add the COOP/COEP headers.';
 
-// kernels.json: {base, kernels:[{name, driver, num_cpus, mem_mb}]}. `base` is where the
-// images live: the kstep-dev/build repo on GitHub for the published site, ./images locally.
+// kernels.json: {base, kernels:[{name, driver, num_cpus, mem_mb}]}; images are fetched from
+// `base`, the kstep-dev/build repo on GitHub at the commit kSTEP pins.
 let base = 'images', kernels = [];
 try {
   ({ base, kernels } = await (await fetch(`kernels.json?v=${V}`)).json());
   $('kernel').replaceChildren(...kernels.map(k => new Option(k.name, k.name)));
-  if (!kernels.length) warn.textContent = 'No kernels listed. Build one with `make KERNEL=<name>` in the kstep root.';
+  if (!kernels.length) warn.textContent = 'No kernels listed in kernels.json.';
 } catch (e) { warn.textContent = 'kernels.json failed: ' + e.message; }
 const fill = () => {
   const k = kernels.find(k => k.name === $('kernel').value); if (!k) return;

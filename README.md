@@ -1,106 +1,85 @@
 # kSTEP on WebAssembly
 
 Runs [kSTEP](https://github.com/kstep-dev/kstep) unmodified inside a QEMU
-compiled to wasm64 with Emscripten, either headless under Node or in a
-browser: https://kstep-dev.github.io/web/. The x86_64 guest, the prebuilt
-kernel images from the [kstep-dev/build](https://github.com/kstep-dev/build)
-repo, and the boot arguments from kSTEP's `run.py` are reused as-is; kSTEP
-itself needs no changes. The published page fetches the images straight from
-that repo on GitHub, so the site only carries the 12 MB QEMU build.
+compiled to WebAssembly, in a browser at https://kstep-dev.github.io/web/ or
+headless under Node. The x86_64 guest, the prebuilt kernel images committed in
+[kstep-dev/build](https://github.com/kstep-dev/build), and the boot arguments
+from kSTEP's `run.py` are used as-is. The page fetches the images from that
+repo on GitHub at the commit kSTEP's `build` submodule pins, so the site itself
+is only the 13 MB QEMU build.
 
 QEMU is Kohei Tokunaga's `wasm64-tcg-b` branch of https://github.com/ktock/qemu
 (QEMU 10.2.50 plus his 33-commit wasm JIT backend), pinned to a commit in
-`build.sh`. Upstream QEMU can already target wasm64 but only with the TCI
-interpreter, which is about 4x slower for kSTEP. Rebasing the backend onto the
-v11.1.0 release was tried (see Notes) and shelved.
+`build.sh`. Upstream QEMU can target wasm64 too but only with the TCI
+interpreter, about 4x slower for kSTEP.
 
-## Measured (aarch64 host without KVM, Node 24)
+## Files
 
-| Guest / QEMU                                             | Driver done | kstep.jsonl |
-|----------------------------------------------------------|-------------|-------------|
-| x86_64 `sync_wakeup_buggy`, native QEMU 8.2 TCG           | 1.4 s       | matches the published results repo |
-| x86_64 `sync_wakeup_buggy`, this build (wasm32-lowered)   | 8.3-8.6 s   | identical to native QEMU 11.1; one line differs from QEMU 8.2 (see Notes) |
-| aarch64 v6.14 `default`, native TCG                       | 0.65 s      | baseline |
-| aarch64 v6.14 `default`, same QEMU built for aarch64      | 10 s        | identical |
-| aarch64, upstream TCI interpreter instead of the JIT      | 40-140 s    | differs |
-
-## Layout
-
-| File          | Purpose |
-|---------------|---------|
-| `build.sh`    | `setup` (apt, emsdk 4.0.23, meson) -> `deps` (zlib, libffi, pixman, glib for wasm64) -> `qemu` (x86_64-softmmu from the pinned branch) |
-| `run.mjs`, `run.sh` | headless runner for Node; `run.sh` finds emsdk's Node and passes the V8 flag |
-| `index.html`  | browser UI: pick kernel (driver, vCPUs, RAM prefilled from `reproduce.py`); streams the console; downloads results |
+| File | Purpose |
+|------|---------|
+| `build.sh` | `setup` (apt, emsdk 4.0.23, meson) -> `deps` (zlib, libffi, pixman, glib cross-built for wasm64) -> `qemu` (x86_64-softmmu) |
+| `run.mjs`, `run.sh` | headless runner; `run.sh` finds emsdk's Node and passes `--wasm-lazy-compilation` |
+| `index.html` | browser UI: pick a kernel (driver, vCPUs, RAM prefilled from `reproduce.py`), watch the console and driver output stream, download results |
 | `coi-serviceworker.min.js` | adds the COOP/COEP headers static hosts cannot send (MIT, gzuidhof/coi-serviceworker) |
-| `deploy.sh`   | stages the site (page + wasm + SeaBIOS + `kernels.json`) in `build/site` and force-pushes it to `gh-pages` |
-| `serve.sh`    | stages the same site with the local `build/` images copied in and serves it with `python3 -m http.server` |
+| `deploy.sh` | stages page + wasm + SeaBIOS + `kernels.json` in `build/site` and force-pushes it as the orphan `gh-pages` branch |
+| `serve.sh` | stages the same site and serves it with `python3 -m http.server` |
 
-Everything generated lives under `build/` (gitignored). kSTEP images come from
-`$KSTEP_DIR/build/<kernel>/{kernel,rootfs.cpio}` (built by `make KERNEL=<kernel>`).
-`KSTEP_DIR` defaults to `../..` when this repo is checked out as kSTEP's
-`docs/web` submodule, else to a sibling `../kstep` checkout.
+Everything generated lives under `build/` (gitignored). `KSTEP_DIR` points at a
+kSTEP checkout and defaults to `../..` (this repo as kSTEP's `docs/web`
+submodule) or `../kstep`. `run.sh` reads images from `$KSTEP_DIR/build/<kernel>/`.
 
 ## Usage
 
 ```sh
-./build.sh                    # ~15 min first time; ./build.sh qemu rebuilds QEMU only
-
-./run.sh --kernel sync_wakeup_buggy          # driver, vCPUs default from the kernel name / reproduce.py
-#   guest console -> stdout, runner status -> stderr, --quiet hides the console
-#   results -> results/<kernel>-<driver>/{qemu.log,kstep.jsonl,kstep.cov}
-
-./serve.sh 8080               # local: http://localhost:8080/, kernels from $KSTEP_DIR/build
-./deploy.sh                   # publish: https://kstep-dev.github.io/web/
+./build.sh                          # ~15 min first time; ./build.sh qemu rebuilds QEMU only (~1 min)
+./run.sh --kernel sync_wakeup_buggy # console -> stdout, status -> stderr, results -> results/<kernel>-<driver>/
+./serve.sh 8080                     # http://localhost:8080/
+./deploy.sh                         # https://kstep-dev.github.io/web/
 ```
 
-`deploy.sh` writes `kernels.json` from the images committed in the build repo
-plus `num_cpus`/`mem_mb` parsed out of `reproduce.py`, and points `base` at
-`raw.githubusercontent.com/kstep-dev/build/<commit pinned by kSTEP's build submodule>`; the browser fetches the
-kernel and initramfs from there at run time. It pushes `build/site` as an
-orphan `gh-pages` branch, so no history accumulates. The service worker
-installs on first load and reloads the page once so SharedArrayBuffer becomes
-available.
+## How it works
 
-vCPUs always run under MTTCG, one host thread each. Guest RAM is capped at
-1024 MB: the wasm heap is fixed at 2 GB (the wasm32 lowering clamps the
-requested 2300 MB), so `long_balance` (4096 MB in `reproduce.py`) does not fit.
+* **Loading.** `index.html` imports the Emscripten module, fetches kernel and
+  initramfs from GitHub plus SeaBIOS from the site, writes them into
+  Emscripten's in-memory FS, and starts QEMU with the same arguments `run.py`
+  uses on x86_64. Every vCPU is a Web Worker (MTTCG); single-threaded TCG
+  aborts in this backend (`icount_enabled()` assertion).
+* **Output.** The three chardevs write to `/dev/kstep0..2`, Emscripten device
+  nodes whose JavaScript write callbacks receive each byte as QEMU emits it, so
+  the console and the driver's `kstep.jsonl` stream into the page without
+  polling. QEMU does not exit on guest reboot under Emscripten, so the reboot
+  line on the console marks completion.
+* **Headers.** Browsers expose SharedArrayBuffer (needed for threads) only with
+  COOP/COEP headers. GitHub Pages cannot send them, so the service worker adds
+  them and reloads the page once on first visit.
+* **wasm32.** The build uses QEMU's `--enable-wasm64-32bit-address-limit`: 64-bit
+  pointers in C, wasm32 output. It therefore runs on engines without Memory64
+  (Safari, Chrome < 133, Firefox < 134). The heap ends up at 2 GB, so guest RAM
+  is capped at 1024 MB and `long_balance` (4096 MB) does not fit.
+* **Caching.** `deploy.sh` stamps a version into the wasm/js/bios URLs so a
+  new deploy is never served from a browser's cache of the previous one.
 
-The binary is built with QEMU's `--enable-wasm64-32bit-address-limit`: the C
-code keeps 64-bit pointers but Emscripten lowers the output to wasm32 with a
-4 GB address limit, so it runs on engines without Memory64 (Safari, Chrome
-before 133, Firefox before 134) as well as on current ones. Dropping the flag
-gives a true wasm64 binary that needs Memory64 support.
+## Measured (aarch64 host, no KVM, Node 24)
 
-## Notes
+| Guest, driver | Native QEMU TCG | This build |
+|---------------|-----------------|------------|
+| x86_64 `sync_wakeup_buggy`, `sync_wakeup`, 3 vCPUs | 1.1-1.4 s | 8-9 s, trace identical to native QEMU 11.1 |
+| aarch64 v6.14, `default`, 2 vCPUs (aarch64 build of the same QEMU) | 0.65 s | 10 s, trace identical |
 
-* **Memory.** The wasm heap is fixed at 2300 MB (`-sTOTAL_MEMORY`). V8 also
-  needs a few GB while optimizing the 20 MB module; `--wasm-lazy-compilation`
-  keeps that bounded. `--liftoff-only --no-wasm-tier-up` is the safe fallback
-  if Node gets OOM-killed, at roughly 3x the run time.
-* **Output path.** The three chardevs write to `/dev/kstep0..2`, Emscripten
-  device nodes whose JavaScript write callbacks receive every byte as QEMU emits
-  it, so console lines are pushed to the page (and to stdout in `run.mjs`)
-  without polling. QEMU does not exit on guest reboot under Emscripten; both
-  runners treat the reboot line on the console as completion.
-* **Single-threaded TCG** (`thread=single`) aborts in this backend with
-  `Assertion failed: icount_enabled()`; only MTTCG is usable.
-* **Correctness.** Native QEMU reproduces the published `kstep.jsonl` for
-  `sync_wakeup_buggy` exactly. Under wasm (6-20x slower) the trace usually
-  differs in one step (a wakeup lands a tick late) and, when the host is
-  overloaded, kthread pids and the tick count until the bug triggers change
-  too. The aarch64 v6.14 default driver was stable across a dozen wasm runs.
-  So the emulation is faithful, but kSTEP's stepping still has wall-clock
-  dependence (kthreadd creation order, IPI tick delivery) that only shows on
-  slow hosts. Worth fixing in kSTEP before treating browser traces as
-  authoritative.
-* **Rebase attempt.** The 33 commits apply to v11.1.0 with two one-line context
-  fixes, the `wasm64_32bit_address_limit` build option, and seven new
-  `outop_*` stubs. That build ran aarch64 kSTEP correctly but x86_64 guests hit
-  an intermittent NULL dereference in `kstep_tick_init` (`tick_get_tick_sched`
-  returning 0), never with the JIT disabled and never on the original branch,
-  so a translation is miscompiled somewhere in the rebased combination. Not
-  yet isolated; the original branch is used instead.
-* **Not tried / dropped.** A virt-only device config (`--with-devices-aarch64`)
-  cut QEMU compile time from ~5 min to ~80 s but only shrank the wasm by 5-25%
-  and kept tripping Kconfig dependencies, so the default device set is used.
-  Lowering the JIT's `INSTANTIATE_NUM` threshold was not measured.
+The wasm traces match native QEMU of the same generation byte for byte. The
+published `sync_wakeup` result was made with QEMU 8.2 and differs in one step,
+so that trace depends on the emulator version rather than on wasm.
+
+## Known issue: kSTEP init race under slow emulation
+
+x86_64 images occasionally panic at module load with a NULL dereference in
+`hrtimer_active` from `kstep_tick_init`. Cause: kSTEP cancels each CPU's
+`tick_sched.sched_timer`, which the kernel only initializes once that CPU
+switches to high-resolution tick mode after the `tsc` clocksource replaces
+`tsc-early`. At 6-20x slowdown the module can load before the isolated CPUs
+got there. It never happens natively, and it is not a JIT bug (it also
+reproduces with the JIT disabled, and native QEMU 11.1 traces match). The fix
+is in kSTEP (`kmod/tick.c`: wait for `sched_timer.base` before cancelling);
+images in the build repo predate it. Rebasing the JIT onto QEMU v11.1.0 was
+tried and works, but is shelved because that build is slower and therefore
+lost this race more often.

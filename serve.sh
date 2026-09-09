@@ -1,7 +1,5 @@
 #!/bin/bash
-# Serve the browser UI locally with the kernels from $KSTEP_DIR/build: stage
-# build/site (same layout as gh-pages) and run a plain static server. The
-# service worker supplies the COOP/COEP headers.
+# Serve the site locally, exactly as deployed (kernel images come from GitHub):
 #   ./serve.sh [port]
 set -euo pipefail
 W=$(cd "$(dirname "$0")" && pwd)

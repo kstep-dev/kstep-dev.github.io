@@ -9,12 +9,9 @@ W=$(cd "$(dirname "$0")" && pwd)
 stage=${1:-all}
 mkdir -p "$W/build"
 # Kohei Tokunaga's QEMU branch carrying the wasm JIT backend (QEMU 10.2.50 + his 33
-# commits), pinned to a commit. The same commits rebased onto the v11.1.0 release built
-# and ran, but x86_64 guests then hit an intermittent init-time NULL dereference in kSTEP
-# that the original branch never does, so the original is used until that is understood.
+# commits), pinned to a commit. See README for the v11.1.0 rebase attempt.
 QEMU_REPO=https://github.com/ktock/qemu
-QEMU_BRANCH=wasm64-tcg-b
-QEMU_COMMIT=8f1406ba3307a10c58be24a8ff00ab6a5d3b6169
+QEMU_COMMIT=8f1406ba3307a10c58be24a8ff00ab6a5d3b6169   # branch wasm64-tcg-b, 2026-01-14
 EMSDK_VERSION=4.0.23
 
 toolchain() {  # emsdk, meson venv, and the cross-built deps prefix
@@ -39,14 +36,24 @@ deps() {
   export CFLAGS="-O3 -pthread -DWASM_BIGINT -sMEMORY64=1" CXXFLAGS="-O3 -pthread -DWASM_BIGINT -sMEMORY64=1"
   export LDFLAGS="-sWASM_BIGINT -sASYNCIFY=1 -L$TARGET/lib -sMEMORY64=1"
   mkdir -p "$TARGET" "$W/build/deps" && cd "$W/build/deps"
-  cross() {  # $1 = output cross file; embeds current CFLAGS/LDFLAGS
-    { printf "[host_machine]\nsystem = 'emscripten'\ncpu_family = 'wasm64'\ncpu = 'wasm64'\nendian = 'little'\n\n"
-      printf "[binaries]\nc = 'emcc'\ncpp = 'em++'\nar = 'emar'\nranlib = 'emranlib'\npkgconfig = ['pkg-config', '--static']\n\n"
-      printf "[built-in options]\nc_args = [%s]\ncpp_args = [%s]\nc_link_args = [%s]\ncpp_link_args = [%s]\n" \
-        "$(printf "'%s', " $CFLAGS | sed 's/, $//')" "$(printf "'%s', " $CFLAGS | sed 's/, $//')" \
-        "$(printf "'%s', " $LDFLAGS | sed 's/, $//')" "$(printf "'%s', " $LDFLAGS | sed 's/, $//')"
-    } > "$1"
-  }
+  cat > cross.meson <<EOT
+[host_machine]
+system = 'emscripten'
+cpu_family = 'wasm64'
+cpu = 'wasm64'
+endian = 'little'
+[binaries]
+c = 'emcc'
+cpp = 'em++'
+ar = 'emar'
+ranlib = 'emranlib'
+pkgconfig = ['pkg-config', '--static']
+[built-in options]
+c_args = [$(printf "'%s', " $CFLAGS -Wno-incompatible-function-pointer-types | sed 's/, $//')]
+cpp_args = [$(printf "'%s', " $CXXFLAGS | sed 's/, $//')]
+c_link_args = [$(printf "'%s', " $LDFLAGS | sed 's/, $//')]
+cpp_link_args = [$(printf "'%s', " $LDFLAGS | sed 's/, $//')]
+EOT
   if [ ! -f "$TARGET/lib/libz.a" ]; then
     mkdir -p zlib && curl -Ls https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.xz | tar xJC zlib --strip-components=1
     (cd zlib && emconfigure ./configure --prefix="$TARGET" --static && emmake make install -j"$(nproc)")
@@ -59,16 +66,14 @@ deps() {
   fi
   if [ ! -f "$TARGET/lib/libpixman-1.a" ]; then
     [ -d pixman ] || git clone -q --depth 1 -b pixman-0.44.2 https://gitlab.freedesktop.org/pixman/pixman
-    cross cross-pixman.meson
-    (cd pixman && meson setup _build --prefix="$TARGET" --cross-file=../cross-pixman.meson \
+    (cd pixman && meson setup _build --prefix="$TARGET" --cross-file=../cross.meson \
       --default-library=static --buildtype=release -Dtests=disabled -Ddemos=disabled && meson install -C _build)
   fi
   if [ ! -f "$TARGET/lib/libglib-2.0.a" ]; then
     printf '#include <netdb.h>\nint res_query(const char *n, int c, int t, unsigned char *d, int l) { h_errno = HOST_NOT_FOUND; return -1; }\n' > res_query.c
     emcc $CFLAGS -c res_query.c -o res_query.o && emar rcs "$TARGET/lib/libresolv.a" res_query.o
     [ -d glib ] || { mkdir glib && curl -Ls https://download.gnome.org/sources/glib/2.84/glib-2.84.0.tar.xz | tar xJC glib --strip-components=1; }
-    CFLAGS="$CFLAGS -Wno-incompatible-function-pointer-types" cross cross-glib.meson
-    (cd glib && rm -rf _build && meson setup _build --prefix="$TARGET" --cross-file=../cross-glib.meson \
+    (cd glib && rm -rf _build && meson setup _build --prefix="$TARGET" --cross-file=../cross.meson \
       --default-library=static --buildtype=release --force-fallback-for=pcre2 \
       -Dselinux=disabled -Dlibelf=disabled -Dxattr=false -Dlibmount=disabled -Dnls=disabled \
       -Dtests=false -Dglib_debug=disabled -Dglib_assert=false -Dglib_checks=false \
@@ -82,8 +87,7 @@ qemu() {
   export CFLAGS="-O3 -pthread -DWASM_BIGINT" CXXFLAGS="-O3 -pthread -DWASM_BIGINT" LDFLAGS="-sWASM_BIGINT -sASYNCIFY=1 -L$TARGET/lib"
   src="$W/build/qemu"
   if [ ! -d "$src" ]; then
-    git clone -q --depth 1 -b "$QEMU_BRANCH" "$QEMU_REPO" "$src"
-    [ "$(git -C "$src" rev-parse HEAD)" = "$QEMU_COMMIT" ] || { git -C "$src" fetch -q --depth 50 origin "$QEMU_BRANCH"; git -C "$src" checkout -q "$QEMU_COMMIT"; }
+    git init -q "$src" && git -C "$src" fetch -q --depth 1 "$QEMU_REPO" "$QEMU_COMMIT" && git -C "$src" checkout -q FETCH_HEAD
   fi
   mkdir -p "$src/build" && cd "$src/build"
   emconfigure ../configure --static --cpu=wasm64 --enable-wasm64-32bit-address-limit --cross-prefix= \
