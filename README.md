@@ -22,6 +22,7 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 | `serve.sh` | same `data.json`, served locally with `python3 -m http.server` |
 | `run.mjs` | the same run, headless under Node (>= 20): for timing and for comparing traces against native QEMU |
 | `cli.mjs` | drives kSTEP's `cli` driver (kmod/cli) over a fourth serial port: the interactive round-robin demo, headless |
+| `site/play.html` | the playground: boot a kernel with the `cli` driver, then `create` tasks and `tick`; draws a timeline of who ran and a table of each task's counters, with a transcript of the session |
 
 `KSTEP_DIR` is the kSTEP checkout; it defaults to `../..` (this repo as kSTEP's
 `docs/website` submodule) or `../kstep`. Everything else generated lives in `build/`.
@@ -31,7 +32,7 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 ```sh
 ./build.sh                            # first time ~15 min; ./build.sh qemu rebuilds QEMU only
 ./run.mjs --kernel sync_wakeup_buggy  # console -> stdout, results -> results/<image>-<driver>/
-./serve.sh 8080                       # http://localhost:8080/
+./serve.sh 8080                       # http://localhost:8080/ ; PLAYGROUND_LOCAL=<dir with kernel+rootfs.cpio> serves play.html from a local image
 ./deploy.sh                           # https://kstep-dev.github.io/
 ```
 

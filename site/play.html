@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kSTEP playground</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0 auto; padding: 0 1rem 3rem; max-width: 60rem; font: 15px/1.5 system-ui, sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
+  h1 { font-size: 1.6rem; margin: 1.2rem 0 .2rem; }
+  nav a { margin-left: 1rem; }
+  h2 { font-size: 1rem; margin: 1.4rem 0 .4rem; border-bottom: 1px solid GrayText; padding-bottom: .15rem; display: flex; justify-content: space-between; align-items: baseline; }
+  h2 span { font-weight: normal; font-size: .85rem; color: GrayText; }
+  #toolbar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .8rem 0; }
+  button, input { font: inherit; padding: .2rem .6rem; }
+  button:disabled { opacity: .5; }
+  #cmd { flex: 1; min-width: 12rem; font-family: ui-monospace, monospace; }
+  #status { color: GrayText; font-variant-numeric: tabular-nums; }
+  #status.bad { color: crimson; }
+  #timeline { display: block; width: 100%; height: 12rem; border: 1px solid GrayText; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: .2rem .5rem; border-bottom: 1px solid color-mix(in srgb, GrayText 40%, transparent); }
+  th:first-child, td:first-child { text-align: left; }
+  pre { margin: 0; height: 12rem; overflow: auto; padding: .5rem .7rem; border: 1px solid GrayText; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+  pre .err { color: crimson; }
+  details pre { height: 14rem; white-space: pre; }
+  .hint { color: GrayText; }
+</style>
+</head>
+<body>
+<header>
+  <h1>kSTEP playground</h1>
+  <nav><a href="./">Reproduce</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
+</header>
+<p>A Linux kernel runs below, with kSTEP holding its scheduler clock. Nothing happens until you say so:
+<code>create</code> adds a runnable task on CPU 1, <code>tick</code> advances the scheduler by exactly one tick.
+The timeline shows which task ran after each tick; the table shows each task's scheduler counters.</p>
+
+<div id="toolbar">
+  <button id="boot">Boot</button>
+  <button class="verb" data-cmd="create" disabled>create</button>
+  <button class="verb" data-ticks="1" disabled>tick</button>
+  <button class="verb" data-ticks="10" disabled>tick ×10</button>
+  <button class="verb" data-ticks="100" disabled>tick ×100</button>
+  <input id="cmd" placeholder="or type a command (create, tick, curr, stat <pid>) and press Enter" disabled>
+  <span id="status">not booted</span>
+</div>
+<p class="hint" id="hint">Space also ticks once. Tasks are labelled t0, t1, … in creation order; the kernel knows them by pid.</p>
+
+<h2>Timeline <span>one column per tick, one row per task</span></h2>
+<canvas id="timeline"></canvas>
+
+<h2>Tasks <span>from <code>stat</code> after every tick</span></h2>
+<table id="tasks"><thead><tr><th>task</th><th>pid</th><th>state</th><th>on cpu</th><th>nice</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th></tr></thead><tbody></tbody></table>
+
+<h2>Transcript <span><button id="copy">copy</button></span></h2>
+<pre id="log"></pre>
+
+<details><summary>Kernel console</summary><pre id="console"></pre></details>
+
+<script src="coi-serviceworker.min.js"></script>
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const status = $('status'), log = $('log'), con = $('console'), canvas = $('timeline');
+const setStatus = (s, bad = false) => { status.textContent = s; status.className = bad ? 'bad' : ''; };
+
+let V = '', play = null;
+try { ({ version: V, playground: play } = await (await fetch('data.json', { cache: 'no-store' })).json()); }
+catch (e) { setStatus('data.json failed: ' + e.message, true); }
+const { BIOS, runKstep } = await import(`./kstep.mjs?v=${V}`);
+
+// ---- session state ----
+const tasks = [];            // [{pid, label, stat}] in creation order
+const timeline = [];         // pid current on CPU 1 after each tick (0 = idle)
+const labelOf = (pid) => tasks.find(t => t.pid === pid)?.label ?? (pid === 0 ? 'idle' : String(pid));
+
+function draw() {
+  const ctx = canvas.getContext('2d'), dpr = devicePixelRatio || 1;
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  canvas.width = W * dpr; canvas.height = H * dpr; ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+  const rows = [...tasks.map(t => t.pid), 0], labelW = 44, rowH = Math.min(22, (H - 4) / rows.length);
+  const cols = Math.max(timeline.length, 60), cellW = (W - labelW - 4) / cols;
+  const fg = getComputedStyle(document.body).color;
+  ctx.font = '12px system-ui'; ctx.textBaseline = 'middle';
+  rows.forEach((pid, r) => {
+    const y = 2 + r * rowH;
+    ctx.fillStyle = fg; ctx.globalAlpha = 0.7; ctx.fillText(labelOf(pid), 2, y + rowH / 2); ctx.globalAlpha = 1;
+    ctx.fillStyle = pid === 0 ? 'gray' : `hsl(${(r * 67) % 360} 60% 50%)`;
+    timeline.forEach((p, c) => { if (p === pid) ctx.fillRect(labelW + c * cellW, y + 1, Math.max(cellW - 1, 1), rowH - 2); });
+  });
+}
+addEventListener('resize', draw);
+
+function renderTasks() {
+  const tb = $('tasks').querySelector('tbody'); tb.replaceChildren();
+  const ms = (ns) => ns === undefined ? '' : (ns / 1e6).toFixed(1);
+  for (const t of tasks) {
+    const s = t.stat ?? {}, tr = tb.insertRow();
+    for (const v of [t.label, t.pid, s.state === 0 ? 'runnable' : s.state, s.on_cpu ? 'yes' : '', s.nice, s.weight, ms(s.sum_exec_runtime), ms(s.vruntime), ms(s.deadline), ms(s.slice)])
+      tr.insertCell().textContent = v ?? '';
+  }
+}
+
+// ---- transport: one command in flight at a time, replies in order ----
+let send = null; const waiters = [];
+const append = (text, cls) => { const span = document.createElement('span'); if (cls) span.className = cls; span.textContent = text + '\n'; log.append(span); log.scrollTop = log.scrollHeight; };
+function cmd(line) {
+  return new Promise(resolve => {
+    waiters.push(resolve);
+    if (line !== null) { append('> ' + line); send(line); }
+  }).then(reply => { append(JSON.stringify(reply), reply.ok ? '' : 'err'); return reply; });
+}
+async function step() {                 // tick, then refresh what the page shows
+  const r = await cmd('tick'); if (!r.ok) return;
+  timeline.push((await cmd('curr')).pid);
+  for (const t of tasks) t.stat = await cmd(`stat ${t.pid}`);
+  draw(); renderTasks(); setStatus(`tick ${timeline.length}, ${tasks.length} tasks`);
+}
+async function create() {
+  const r = await cmd('create'); if (!r.ok) return;
+  tasks.push({ pid: r.pid, label: `t${tasks.length}` });
+  tasks.at(-1).stat = await cmd(`stat ${r.pid}`);
+  draw(); renderTasks(); setStatus(`tick ${timeline.length}, ${tasks.length} tasks`);
+}
+
+let busy = false;
+async function run(fn) {               // serialise UI actions
+  if (busy || !send) return; busy = true;
+  document.querySelectorAll('.verb, #cmd').forEach(e => e.disabled = true);
+  try { await fn(); } catch (e) { setStatus('error: ' + e.message, true); }
+  document.querySelectorAll('.verb, #cmd').forEach(e => e.disabled = false);
+  busy = false;
+}
+document.querySelectorAll('.verb').forEach(b => b.onclick = () => run(async () => {
+  if (b.dataset.cmd) return create();
+  for (let i = 0; i < +b.dataset.ticks; i++) await step();
+}));
+$('cmd').onkeydown = (e) => { if (e.key !== 'Enter') return; const line = $('cmd').value.trim(); $('cmd').value = ''; if (!line) return;
+  run(async () => { if (line === 'create') return create(); if (line === 'tick') return step(); const r = await cmd(line); if (line.startsWith('stat') && r.ok) { const t = tasks.find(t => t.pid === r.pid); if (t) { t.stat = r; renderTasks(); } } }); };
+addEventListener('keydown', (e) => { if (e.key === ' ' && e.target === document.body) { e.preventDefault(); run(step); } });
+$('copy').onclick = () => navigator.clipboard.writeText(log.textContent);
+
+$('boot').onclick = async () => {
+  $('boot').disabled = true;
+  try {
+    setStatus('downloading');
+    const get = (u) => fetch(u).then(r => { if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`); return r.arrayBuffer(); });
+    const [kernel, rootfs, { default: Module }, ...bios] = await Promise.all([
+      get(`${play.base}/${play.image}/kernel`), get(`${play.base}/${play.image}/rootfs.cpio`),
+      import(`./qemu/qemu-system-x86_64.js?v=${V}`), ...BIOS.map(f => get(`qemu/${f}?v=${V}`)),
+    ]);
+    setStatus('booting');
+    const t0 = performance.now();
+    const r = await runKstep(Module, {
+      files: { kernel, rootfs, bios: Object.fromEntries(BIOS.map((f, i) => [f, bios[i]])) },
+      driver: 'cli', smp: play.num_cpus, mem: play.mem_mb, cli: true,
+      locateFile: (f) => `qemu/${f}?v=${V}`,
+      onLine: (ch, line) => {
+        if (ch === 'console') { con.append(line + '\n'); con.scrollTop = con.scrollHeight; if (line.includes('Kernel panic')) setStatus('kernel panic', true); }
+        else if (ch === 'cli') waiters.shift()?.(JSON.parse(line));
+      },
+    });
+    send = r.send;
+    await cmd(null);   // the driver's ready line
+    setStatus(`ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
+    document.querySelectorAll('.verb, #cmd').forEach(e => e.disabled = false);
+    draw();
+  } catch (e) { setStatus('error: ' + e.message, true); $('boot').disabled = false; }
+};
+draw();
+</script>
+</body>
+</html>

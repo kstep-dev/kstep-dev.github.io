@@ -48,9 +48,21 @@ for b in reproduce.BUGS + getattr(reproduce, "BUGS_EXTRA", []):
     if not imgs or b.mem_mb > MAX_MEM_MB: continue
     bugs.append({"name": b.name, "title": titles.get(b.name, b.name), "num_cpus": b.num_cpus, "mem_mb": b.mem_mb,
                  "images": imgs, **rows.get(b.name, {"driver_url": None, "fixes": [], "plot": None})})
-print(json.dumps({"version": version, "base": base, "bugs": bugs}, indent=1))
+# Playground (play.html): a plain kernel whose kmod has the `cli` driver. Served from the same
+# base unless PLAYGROUND_LOCAL points at a local build dir with kernel + rootfs.cpio (then the
+# images are copied into site/images/ for local testing).
+import os
+play = {"image": "cli", "base": base, "num_cpus": 2, "mem_mb": 128}
+if os.environ.get("PLAYGROUND_LOCAL"):
+    play["base"] = "images"
+print(json.dumps({"version": version, "base": base, "bugs": bugs, "playground": play}, indent=1))
 PY
 ) > "$W/site/data.json"
+if [ -n "${PLAYGROUND_LOCAL:-}" ]; then
+  mkdir -p "$W/site/images/cli" && cp "$PLAYGROUND_LOCAL/kernel" "$PLAYGROUND_LOCAL/rootfs.cpio" "$W/site/images/cli/"
+else
+  rm -rf "$W/site/images"
+fi
 echo "site/: $(du -sh "$W/site" | cut -f1); $(python3 -c "import json;print(len(json.load(open('$W/site/data.json'))['bugs']))") bugs, images from $base"
 [ "${1:-}" = --stage-only ] && exit 0
 

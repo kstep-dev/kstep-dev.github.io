@@ -3,3 +3,4 @@ results/
 *.log
 site/qemu/
 site/data.json
+site/images/
