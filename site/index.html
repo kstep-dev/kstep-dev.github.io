@@ -12,7 +12,9 @@
   h2 { font-size: 1.15rem; margin: 2rem 0 .5rem; border-bottom: 1px solid GrayText; padding-bottom: .2rem; }
   p, li { max-width: 46rem; }
   .authors { color: GrayText; margin: 0 0 .3rem; }
-  nav a { margin-right: 1rem; }
+  header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+  nav { margin-top: 1.4rem; white-space: nowrap; }
+  nav a { margin-left: 1rem; }
   table { border-collapse: collapse; width: 100%; font-size: .92rem; }
   th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid color-mix(in srgb, GrayText 40%, transparent); vertical-align: top; }
   th { font-weight: 600; }
@@ -40,14 +42,13 @@
 </style>
 </head>
 <body>
-<h1>kSTEP <small>Kernel Scheduler Test and Evaluation Platform</small></h1>
-<p class="authors">Tingjia Cao, Shawn (Wanxiang) Zhong, Caeden Whitaker, Ke Han, Andrea C. Arpaci-Dusseau, Remzi H. Arpaci-Dusseau. OSDI '26.</p>
-<nav>
-  <a href="assets/paper-osdi26.pdf">Paper (PDF)</a>
-  <a href="https://github.com/kstep-dev/kstep">Code</a>
-  <a href="https://github.com/kstep-dev/study">Bug study</a>
-  <a href="https://github.com/kstep-dev/results">Results</a>
-</nav>
+<header>
+  <div>
+    <h1>kSTEP <small>Kernel Scheduler Test and Evaluation Platform</small></h1>
+    <p class="authors">Tingjia Cao, Shawn (Wanxiang) Zhong, Caeden Whitaker, Ke Han, Andrea C. Arpaci-Dusseau, Remzi H. Arpaci-Dusseau. OSDI '26.</p>
+  </div>
+  <nav><a href="assets/paper-osdi26.pdf">Paper</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
+</header>
 
 <h2>Reproduce a scheduler bug in your browser</h2>
 <p>Each row is a real Linux CPU scheduler bug with a kSTEP driver that triggers it.
