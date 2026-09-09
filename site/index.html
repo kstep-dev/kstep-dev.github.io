@@ -35,8 +35,7 @@
   #plot { display: block; max-height: 18rem; max-width: 100%; width: auto; margin: .6rem auto; }
   figure { margin: 1.2rem 0; text-align: center; }
   figure img { max-width: 100%; max-height: 22rem; }
-  figcaption { text-align: left; }
-  figcaption { font-size: .9rem; color: GrayText; }
+
   #warn { color: crimson; }
 </style>
 </head>
@@ -70,7 +69,8 @@ A run takes about ten seconds.</p>
 </table>
 
 <h2>How kSTEP works</h2>
-<figure><img src="figures/arch.svg" alt="kSTEP architecture"><figcaption>A driver program (kernel code, one per bug) declares a sequence of scheduler-invoking events: task creation, wakeups, sleeps, cgroup changes, ticks. The kSTEP module dispatches them on CPUs isolated from the rest of the system, with the scheduler clock and the tick under its control, so the unmodified scheduler runs the same code path it would in production and produces the same trace on every run. The trace above is that output; the plot compares it for the buggy and the fixed kernel.</figcaption></figure>
+<p>A driver program (kernel code, one per bug) declares a sequence of scheduler-invoking events: task creation, wakeups, sleeps, cgroup changes, ticks. The kSTEP module dispatches them on CPUs isolated from the rest of the system, with the scheduler clock and the tick under its control, so the unmodified scheduler runs the same code path it would in production and produces the same trace on every run. The trace above is that output; the plot compares it for the buggy and the fixed kernel.</p>
+<figure><img src="figures/arch.svg" alt="kSTEP architecture"></figure>
 <ul>
   <li><b>Timing.</b> Logical time advances only when the driver ticks, so events can be placed inside transient windows a few microseconds wide.</li>
   <li><b>Control.</b> Drivers create and steer tasks and cgroups, trigger kernel activities such as load balancing, and set CPU frequency and topology.</li>
