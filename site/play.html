@@ -18,7 +18,9 @@
   #cmd { flex: 1; min-width: 12rem; font-family: ui-monospace, monospace; }
   #status { color: GrayText; font-variant-numeric: tabular-nums; }
   #status.bad { color: crimson; }
-  #timeline { display: block; width: 100%; height: 12rem; border: 1px solid GrayText; }
+  #timeline { display: block; width: 100%; height: 12rem; border: 1px solid GrayText; border-bottom: 0; }
+  #scroll { overflow-x: auto; overflow-y: hidden; height: 14px; border: 1px solid GrayText; border-top: 0; }
+  #spacer { height: 1px; }
   table { border-collapse: collapse; width: 100%; font-size: .9rem; font-variant-numeric: tabular-nums; }
   th, td { text-align: right; padding: .2rem .5rem; border-bottom: 1px solid color-mix(in srgb, GrayText 40%, transparent); }
   th:first-child, td:first-child { text-align: left; }
@@ -55,6 +57,7 @@ The timeline shows which task ran after each tick; the table shows each task's s
 
 <h2>Timeline <span>one column per tick, one row per task</span></h2>
 <canvas id="timeline"></canvas>
+<div id="scroll"><div id="spacer"></div></div>
 
 <h2>Tasks <span>from <code>stat</code> after every tick</span></h2>
 <table id="tasks"><thead><tr><th>task</th><th>pid</th><th>state</th><th>on cpu</th><th>nice</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th></tr></thead><tbody></tbody></table>
@@ -80,22 +83,40 @@ const tasks = [];            // [{pid, label, stat}] in creation order
 const timeline = [];         // pid current on CPU 1 after each tick (0 = idle)
 const labelOf = (pid) => tasks.find(t => t.pid === pid)?.label ?? (pid === 0 ? 'idle' : String(pid));
 
+// Fixed-width columns; when the run is longer than the canvas, the view follows the latest
+// ticks (a horizontal scrollbar under the canvas lets you look back). Column width does not
+// shrink, so a slice always looks like a slice.
+const CELL = 8, LABEL_W = 44;
+const scroller = $('scroll');
+let follow = true;
+scroller.onscroll = () => { follow = scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 2; };
 function draw() {
   const ctx = canvas.getContext('2d'), dpr = devicePixelRatio || 1;
   const W = canvas.clientWidth, H = canvas.clientHeight;
   canvas.width = W * dpr; canvas.height = H * dpr; ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
-  const rows = [...tasks.map(t => t.pid), 0], labelW = 44, rowH = Math.min(22, (H - 4) / rows.length);
-  const cols = Math.max(timeline.length, 60), cellW = (W - labelW - 4) / cols;
+  const rows = [...tasks.map(t => t.pid), 0], rowH = Math.min(22, (H - 4) / rows.length);
+  const visible = Math.floor((W - LABEL_W - 4) / CELL);
+  // scrollbar bookkeeping: the spacer is as wide as the whole run
+  $('spacer').style.width = `${Math.max(timeline.length * CELL + LABEL_W, W)}px`;
+  if (follow) scroller.scrollLeft = scroller.scrollWidth;
+  const first = Math.max(0, Math.min(Math.round(scroller.scrollLeft / CELL), timeline.length - visible));
   const fg = getComputedStyle(document.body).color;
   ctx.font = '12px system-ui'; ctx.textBaseline = 'middle';
   rows.forEach((pid, r) => {
     const y = 2 + r * rowH;
     ctx.fillStyle = fg; ctx.globalAlpha = 0.7; ctx.fillText(labelOf(pid), 2, y + rowH / 2); ctx.globalAlpha = 1;
     ctx.fillStyle = pid === 0 ? 'gray' : `hsl(${(r * 67) % 360} 60% 50%)`;
-    timeline.forEach((p, c) => { if (p === pid) ctx.fillRect(labelW + c * cellW, y + 1, Math.max(cellW - 1, 1), rowH - 2); });
+    for (let c = first; c < Math.min(timeline.length, first + visible); c++)
+      if (timeline[c] === pid) ctx.fillRect(LABEL_W + (c - first) * CELL, y + 1, CELL - 1, rowH - 2);
   });
+  // tick numbers every 10 columns along the bottom edge
+  ctx.fillStyle = fg; ctx.globalAlpha = 0.5; ctx.font = '10px system-ui';
+  for (let c = first - (first % 10); c < first + visible; c += 10)
+    if (c >= first) ctx.fillText(String(c), LABEL_W + (c - first) * CELL, H - 6);
+  ctx.globalAlpha = 1;
 }
+scroller.addEventListener('scroll', draw);
 addEventListener('resize', draw);
 
 function renderTasks() {
