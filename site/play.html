@@ -36,32 +36,31 @@
   <nav><a href="./">Reproduce</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
 </header>
 <p>A Linux kernel runs below, with kSTEP holding its scheduler clock. Nothing happens until you say so:
-<code>create</code> adds a runnable task on CPU 1, <code>kill</code> ends one, <code>tick</code> advances the scheduler by exactly one tick.
-The timeline shows which task ran after each tick; the table shows each task's scheduler counters.</p>
+<code>create</code> adds a runnable task (on any CPU, or <code>create 2</code> for CPU 2 only), <code>pin</code> moves one, <code>kill</code> ends one, <code>tick</code> advances the scheduler by exactly one tick.
+The timeline shows, per CPU, which task ran after each tick; the table lists the live tasks with their scheduler counters.</p>
 
 <div id="toolbar">
   <button id="boot">Boot</button>
-  <label class="hint">with <input id="ntasks" type="number" min="0" max="16" value="3" style="width:3.5rem"> tasks</label>
+  <label class="hint">with <input id="ntasks" type="number" min="0" max="16" value="3" style="width:3.5rem"> tasks on
+    <select id="ncpus"><option>1</option><option>2</option><option>3</option><option>4</option></select> CPUs</label>
   <button class="verb" data-cmd="create" disabled>create</button>
   <button class="verb" data-ticks="1" disabled>tick</button>
-  <button class="verb" data-ticks="10" disabled>tick ×10</button>
-  <button class="verb" data-ticks="100" disabled>tick ×100</button>
   <button id="auto" class="verb" disabled>auto tick</button>
   <select id="rate" class="verb" disabled title="ticks per second while auto ticking">
     <option value="1">1/s</option><option value="2">2/s</option><option value="5" selected>5/s</option>
     <option value="10">10/s</option><option value="20">20/s</option><option value="0">max</option>
   </select>
-  <input id="cmd" placeholder="or type a command (create, tick, curr, stat <pid>, kill <pid>) and press Enter" disabled>
+  <input id="cmd" placeholder="or type a command (create [cpu], pin <pid> <cpu> [cpu2], tick, curr, tasks, stat <pid>, kill <pid>) and press Enter" disabled>
   <span id="status">not booted</span>
 </div>
 <p class="hint" id="hint">Space ticks once; auto tick keeps ticking at the chosen rate until paused, and other commands still work in between. Tasks are labelled t0, t1, … in creation order; the kernel knows them by pid.</p>
 
-<h2>Timeline <span>one column per tick, one row per task</span></h2>
+<h2>Timeline <span>one column per tick, one row per CPU, colour = task</span></h2>
 <canvas id="timeline"></canvas>
 <div id="scroll"><div id="spacer"></div></div>
 
 <h2>Tasks <span>from <code>stat</code> after every tick</span></h2>
-<table id="tasks"><thead><tr><th>task</th><th>pid</th><th>state</th><th>on cpu</th><th>nice</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th><th></th></tr></thead><tbody></tbody></table>
+<table id="tasks"><thead><tr><th></th><th>task</th><th>pid</th><th>state</th><th>on</th><th>nice</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th><th></th></tr></thead><tbody></tbody></table>
 
 <h2>Transcript <span><button id="copy">copy</button></span></h2>
 <pre id="log"></pre>
@@ -82,8 +81,10 @@ const { BIOS, runKstep } = await import(`./kstep.mjs?v=${V}`);
 // ---- session state ----
 let busy = false;
 const tasks = [];            // [{pid, label, stat}] in creation order
-const timeline = [];         // pid current on CPU 1 after each tick (0 = idle)
-const labelOf = (pid) => tasks.find(t => t.pid === pid)?.label ?? (pid === 0 ? 'idle' : String(pid));
+const timeline = [];         // per tick: [pid on CPU 1, pid on CPU 2, ...] (0 = idle)
+let ncpus = 1;
+// Colours are fixed per creation order, so a task keeps its colour in the timeline after it exits.
+const colorOf = (pid) => { const i = tasks.findIndex(t => t.pid === pid); return i < 0 ? 'gray' : `hsl(${(i * 67) % 360} 60% 50%)`; };
 
 // Fixed-width columns; when the run is longer than the canvas, the view follows the latest
 // ticks (a horizontal scrollbar under the canvas lets you look back). Column width does not
@@ -97,7 +98,7 @@ function draw() {
   const W = canvas.clientWidth, H = canvas.clientHeight;
   canvas.width = W * dpr; canvas.height = H * dpr; ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
-  const rows = [...tasks.map(t => t.pid), 0], rowH = Math.min(22, (H - 4) / rows.length);
+  const rowH = Math.min(28, (H - 16) / ncpus);
   const visible = Math.floor((W - LABEL_W - 4) / CELL);
   // scrollbar bookkeeping: the spacer is as wide as the whole run
   $('spacer').style.width = `${Math.max(timeline.length * CELL + LABEL_W, W)}px`;
@@ -105,13 +106,15 @@ function draw() {
   const first = Math.max(0, Math.min(Math.round(scroller.scrollLeft / CELL), timeline.length - visible));
   const fg = getComputedStyle(document.body).color;
   ctx.font = '12px system-ui'; ctx.textBaseline = 'middle';
-  rows.forEach((pid, r) => {
-    const y = 2 + r * rowH;
-    ctx.fillStyle = fg; ctx.globalAlpha = 0.7; ctx.fillText(labelOf(pid), 2, y + rowH / 2); ctx.globalAlpha = 1;
-    ctx.fillStyle = pid === 0 ? 'gray' : `hsl(${(r * 67) % 360} 60% 50%)`;
-    for (let c = first; c < Math.min(timeline.length, first + visible); c++)
-      if (timeline[c] === pid) ctx.fillRect(LABEL_W + (c - first) * CELL, y + 1, CELL - 1, rowH - 2);
-  });
+  for (let cpu = 0; cpu < ncpus; cpu++) {
+    const y = 2 + cpu * rowH;
+    ctx.fillStyle = fg; ctx.globalAlpha = 0.7; ctx.fillText(`cpu${cpu + 1}`, 2, y + rowH / 2); ctx.globalAlpha = 1;
+    for (let c = first; c < Math.min(timeline.length, first + visible); c++) {
+      const pid = timeline[c][cpu];
+      ctx.fillStyle = pid ? colorOf(pid) : 'color-mix(in srgb, GrayText 25%, transparent)';
+      ctx.fillRect(LABEL_W + (c - first) * CELL, y + 1, CELL - 1, rowH - 2);
+    }
+  }
   // tick numbers every 10 columns along the bottom edge
   ctx.fillStyle = fg; ctx.globalAlpha = 0.5; ctx.font = '10px system-ui';
   for (let c = first - (first % 10); c < first + visible; c += 10)
@@ -125,14 +128,24 @@ function renderTasks() {
   const tb = $('tasks').querySelector('tbody'); tb.replaceChildren();
   const ms = (ns) => ns === undefined ? '' : (ns / 1e6).toFixed(1);
   for (const t of tasks) {
+    if (!t.alive) continue;
     const s = t.stat ?? {}, tr = tb.insertRow();
-    const state = t.exited ? 'exited' : t.killed ? 'exiting' : s.state === 0 ? 'runnable' : s.state;
-    for (const v of [t.label, t.pid, state, s.on_cpu ? 'yes' : '', s.nice, s.weight, ms(s.sum_exec_runtime), ms(s.vruntime), ms(s.deadline), ms(s.slice)])
+    const sw = tr.insertCell(); sw.style.background = colorOf(t.pid); sw.style.width = '.8rem';
+    for (const v of [t.label, t.pid, s.state === 0 ? 'runnable' : s.state, s.on_cpu ? `cpu${s.cpu}` : '', s.nice, s.weight, ms(s.sum_exec_runtime), ms(s.vruntime), ms(s.deadline), ms(s.slice)])
       tr.insertCell().textContent = v ?? '';
     const cell = tr.insertCell();
-    if (!t.killed) { const b = document.createElement('button'); b.textContent = 'kill'; b.className = 'verb'; b.disabled = !send || busy;
-      b.onclick = () => run(async () => { if ((await cmd(`kill ${t.pid}`)).ok) { t.killed = true; renderTasks(); } }); cell.append(b); }
+    const b = document.createElement('button'); b.textContent = 'kill'; b.className = 'verb'; b.disabled = !send || busy;
+    b.onclick = () => run(async () => { await cmd(`kill ${t.pid}`); });
+    cell.append(b);
   }
+}
+
+// The kernel owns the task list: `tasks` says which of this session's tasks are still alive.
+async function refresh() {
+  const live = (await cmd('tasks')).tasks;
+  for (const t of tasks) t.alive = live.includes(t.pid);
+  for (const t of tasks) if (t.alive) t.stat = await cmd(`stat ${t.pid}`);
+  draw(); renderTasks(); setStatus(`tick ${timeline.length}, ${live.length} tasks`);
 }
 
 // ---- transport: one command in flight at a time, replies in order ----
@@ -146,19 +159,13 @@ function cmd(line) {
 }
 async function step() {                 // tick, then refresh what the page shows
   const r = await cmd('tick'); if (!r.ok) return;
-  timeline.push((await cmd('curr')).pid);
-  for (const t of tasks) {
-    if (t.exited) continue;
-    const r = await cmd(`stat ${t.pid}`);
-    if (r.ok) t.stat = r; else if (t.killed) t.exited = true;
-  }
-  draw(); renderTasks(); setStatus(`tick ${timeline.length}, ${tasks.length} tasks`);
+  timeline.push((await cmd('curr')).curr);
+  await refresh();
 }
-async function create() {
-  const r = await cmd('create'); if (!r.ok) return;
-  tasks.push({ pid: r.pid, label: `t${tasks.length}` });
-  tasks.at(-1).stat = await cmd(`stat ${r.pid}`);
-  draw(); renderTasks(); setStatus(`tick ${timeline.length}, ${tasks.length} tasks`);
+async function create(cpu) {
+  const r = await cmd(cpu ? `create ${cpu}` : 'create'); if (!r.ok) return;
+  tasks.push({ pid: r.pid, label: `t${tasks.length}`, alive: true });
+  await refresh();
 }
 
 async function run(fn) {               // serialise UI actions
@@ -190,12 +197,13 @@ $('auto').onclick = () => {
   else { clearTimeout(auto); auto = null; $('auto').textContent = 'auto tick'; }
 };
 $('cmd').onkeydown = (e) => { if (e.key !== 'Enter') return; const line = $('cmd').value.trim(); $('cmd').value = ''; if (!line) return;
-  run(async () => { if (line === 'create') return create(); if (line === 'tick') return step(); const r = await cmd(line); if (line.startsWith('stat') && r.ok) { const t = tasks.find(t => t.pid === r.pid); if (t) { t.stat = r; renderTasks(); } } }); };
+  run(async () => { if (line === 'create') return create(); if (line === 'tick') return step(); await cmd(line); await refresh(); }); };
 addEventListener('keydown', (e) => { if (e.key === ' ' && e.target === document.body) { e.preventDefault(); run(step); } });
 $('copy').onclick = () => navigator.clipboard.writeText(log.textContent);
 
 $('boot').onclick = async () => {
-  $('boot').disabled = true;
+  $('boot').disabled = true; $('ncpus').disabled = true; $('ntasks').disabled = true;
+  ncpus = +$('ncpus').value;
   try {
     setStatus('downloading');
     const get = (u) => fetch(u).then(r => { if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`); return r.arrayBuffer(); });
@@ -207,7 +215,7 @@ $('boot').onclick = async () => {
     const t0 = performance.now();
     const r = await runKstep(Module, {
       files: { kernel, rootfs, bios: Object.fromEntries(BIOS.map((f, i) => [f, bios[i]])) },
-      driver: 'cli', smp: play.num_cpus, mem: play.mem_mb, cli: true,
+      driver: 'cli', smp: ncpus + 1, mem: play.mem_mb, cli: true,
       locateFile: (f) => `qemu/${f}?v=${V}`,
       onLine: (ch, line) => {
         if (ch === 'console') { con.append(line + '\n'); con.scrollTop = con.scrollHeight; if (line.includes('Kernel panic')) setStatus('kernel panic', true); }
