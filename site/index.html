@@ -27,9 +27,10 @@
   #status.ok { color: green; } #status.bad { color: crimson; }
   #panes { display: grid; grid-template-columns: 3fr 2fr; gap: .8rem; margin-top: .6rem; }
   @media (max-width: 800px) { #panes { grid-template-columns: 1fr; } }
+  .pane { min-width: 0; }   /* let grid cells shrink; long console lines scroll inside the pane */
   .pane h3 { font-size: .8rem; font-weight: 600; margin: 0 0 .25rem; display: flex; justify-content: space-between; align-items: center; }
   .pane h3 span button { margin-left: .3rem; }
-  .pane pre { margin: 0; height: 24rem; overflow: auto; padding: .5rem .7rem; border: 1px solid GrayText; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+  .pane pre { margin: 0; height: 24rem; overflow: auto; max-width: 100%; padding: .5rem .7rem; border: 1px solid GrayText; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
   #plot { max-width: 100%; margin-top: .8rem; display: block; }
   figure { margin: 1.2rem 0; }
   figure img { max-width: 100%; }
