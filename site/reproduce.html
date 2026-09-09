@@ -4,39 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>kSTEP: reproduce a scheduler bug</title>
+<link rel="stylesheet" href="style.css">
 <style>
-  :root { color-scheme: light dark; }
-  body { margin: 0 auto; padding: 0 1rem 3rem; max-width: 60rem; font: 15px/1.5 system-ui, sans-serif; }
-  h1 { font-size: 1.6rem; margin: 1.2rem 0 .2rem; }
-  h1 small { font-weight: normal; font-size: 1rem; color: GrayText; margin-left: .5rem; }
-  h2 { font-size: 1.15rem; margin: 2rem 0 .5rem; border-bottom: 1px solid GrayText; padding-bottom: .2rem; }
-  header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
-  nav { margin-top: 1.4rem; white-space: nowrap; }
-  nav a { margin-left: 1rem; }
-  table { border-collapse: collapse; width: 100%; font-size: .92rem; }
-  th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid color-mix(in srgb, GrayText 40%, transparent); vertical-align: top; }
-  th { font-weight: 600; }
+  th, td { text-align: left; vertical-align: top; padding: .35rem .5rem; }
   td.act { white-space: nowrap; }
   tr.selected td { background: color-mix(in srgb, Highlight 12%, transparent); }
-  button { font: inherit; font-size: .88rem; padding: .1rem .55rem; cursor: pointer; }
-  button:disabled { cursor: default; opacity: .6; }
   #runbox { margin-top: 1rem; }
   #runhead { display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap; }
   #runhead b { font-size: 1rem; }
-  #status { color: GrayText; font-weight: normal; font-variant-numeric: tabular-nums; margin-left: .6rem; }
-  #status.ok { color: green; } #status.bad { color: crimson; }
-  #panes { display: grid; grid-template-columns: 3fr 2fr; gap: .8rem; margin-top: .6rem; }
-  @media (max-width: 800px) { #panes { grid-template-columns: 1fr; } }
-  .pane { min-width: 0; }   /* let grid cells shrink; long console lines scroll inside the pane */
-  .pane h3 { font-size: .8rem; font-weight: 600; margin: 0 0 .25rem; display: flex; justify-content: space-between; align-items: center; }
+  #panes { grid-template-columns: 3fr 2fr; margin-top: .6rem; }
   .pane h3 span button { margin-left: .3rem; }
+  .pane pre { height: 24rem; }
   .pane pre.idle { color: GrayText; white-space: pre-wrap; }
-  .pane pre { margin: 0; height: 24rem; overflow: auto; max-width: 100%; padding: .5rem .7rem; border: 1px solid GrayText; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
   #plot { display: block; max-height: 18rem; max-width: 100%; width: auto; margin: .6rem auto; }
   #plot[hidden] { display: none; }
-  figure { margin: 1.2rem 0; text-align: center; }
-  figure img { max-width: 100%; max-height: 22rem; }
-
   #warn { color: crimson; }
 </style>
 </head>

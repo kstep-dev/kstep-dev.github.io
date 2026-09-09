@@ -2,7 +2,7 @@
 # Generate site/data.json and (unless --stage-only) force-push site/ as the gh-pages
 # branch; history is not kept there.
 #   ./deploy.sh [--stage-only]
-# site/ = index.html, reproduce.html, kstep.mjs, figures/, coi-serviceworker.min.js (tracked) + qemu/ (from build.sh) + data.json.
+# site/ = index.html, reproduce.html, style.css, kstep.mjs, figures/, coi-serviceworker.min.js (tracked) + qemu/ (from build.sh) + data.json.
 # The browser fetches kernel images from the kstep-dev/build repo on GitHub, at the commit
 # the kSTEP `build` submodule pins, so the site carries no images.
 set -euo pipefail

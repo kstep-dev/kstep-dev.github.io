@@ -4,27 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>kSTEP: Kernel Scheduler Test and Evaluation Platform</title>
+<link rel="stylesheet" href="style.css">
 <style>
-  :root { color-scheme: light dark; }
-  body { margin: 0 auto; padding: 0 1rem 3rem; max-width: 60rem; font: 15px/1.5 system-ui, sans-serif; }
-  header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
-  h1 { font-size: 1.6rem; margin: 1.2rem 0 .2rem; }
-  nav a { margin-left: 1rem; }
-  nav { display: flex; align-items: baseline; }
-  h2 { font-size: 1rem; margin: 1.4rem 0 .4rem; border-bottom: 1px solid GrayText; padding-bottom: .15rem; display: flex; justify-content: space-between; align-items: baseline; }
-  h2 span { font-weight: normal; font-size: .85rem; color: GrayText; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
-  h2 label { display: flex; gap: .35rem; align-items: center; }
-  button, input, select { font: inherit; font-size: .92rem; padding: .25rem .7rem; border: 1px solid color-mix(in srgb, GrayText 55%, transparent); border-radius: .3rem; background: Canvas; color: CanvasText; }
-  button { cursor: pointer; }
-  button:hover:not(:disabled) { background: color-mix(in srgb, GrayText 12%, Canvas); }
-  button:disabled { cursor: default; opacity: .5; }
-  button.primary { background: AccentColor; color: AccentColorText; border-color: transparent; }
-  button.primary:hover:not(:disabled) { filter: brightness(1.1); }
   td input { padding: 0 .2rem; font-size: .85rem; }
   td input.bad { border-color: crimson; color: crimson; }
-  td button { padding: 0 .5rem; font-size: .8rem; }
   td select { padding: 0 .2rem; font-size: .85rem; }
-  #status { color: GrayText; font-weight: normal; font-variant-numeric: tabular-nums; margin-left: .4rem; }
+  #tasks th, #tasks td { text-align: right; font-variant-numeric: tabular-nums; }
+  #tasks th:first-child, #tasks td:first-child { text-align: left; }
   #cpu-hint { margin: 0; }
   #cpu-hint:empty { display: none; }
   #cpu-hint.bad { color: crimson; }
@@ -41,29 +27,16 @@
   .threads { display: flex; gap: 2px; }
   .core span { display: inline-block; padding: .1rem .35rem; font-size: .75rem; font-variant-numeric: tabular-nums; background: color-mix(in srgb, GrayText 15%, transparent); border-radius: .15rem; }
   #clock { display: flex; gap: .5rem; align-items: center; }
-  #status.bad { color: crimson; }
   #timeline { display: block; width: 100%; border: 1px solid GrayText; border-bottom: 0; }
   #scroll { overflow-x: auto; overflow-y: hidden; height: 18px; border: 1px solid GrayText; border-top: 0; }
   #spacer { height: 1px; }
-  table { border-collapse: collapse; width: 100%; font-size: .9rem; font-variant-numeric: tabular-nums; }
-  th, td { text-align: right; padding: .2rem .5rem; border-bottom: 1px solid color-mix(in srgb, GrayText 40%, transparent); }
-  th:first-child, td:first-child { text-align: left; }
-  #bugs th, #bugs td { text-align: left; vertical-align: middle; }
-  #bugs td { white-space: normal; padding: .5rem; }
+  #bugs th { text-align: left; }
+  #bugs td { vertical-align: middle; padding: .5rem; }
   #bugs td:last-child { width: 55%; text-align: center; }
   #bugs img { max-height: 14rem; max-width: 100%; }
   #bugs td div { line-height: 1.6; }
-  #bugs .run a { margin-right: .5rem; }
-  figure { text-align: center; margin: .8rem 0; }
-  figure img { max-width: 100%; }
-  #panes { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; margin-top: 1.4rem; }
-  @media (max-width: 800px) { #panes { grid-template-columns: 1fr; } }
-  .pane { min-width: 0; }   /* let grid cells shrink; long lines scroll inside the pane */
-  .pane h3 { font-size: .8rem; font-weight: 600; margin: 0 0 .25rem; }
-  pre { margin: 0; height: 14rem; overflow: auto; max-width: 100%; padding: .5rem .7rem; border: 1px solid GrayText; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
   pre .err { color: crimson; }
   pre .event { opacity: .6; }
-  .hint { color: GrayText; }
 </style>
 </head>
 <body>

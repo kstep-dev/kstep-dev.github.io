@@ -15,13 +15,13 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 
 | Path | Purpose |
 |------|---------|
-| `site/` | the published site. Tracked: `index.html` (playground + bug catalog + paper), `reproduce.html` (bug reproducer), `kstep.mjs`, `figures/`, `assets/` (paper PDF), `coi-serviceworker.min.js`. Generated, gitignored: `qemu/` (from `build.sh`) and `data.json` (from `deploy.sh`) |
+| `site/` | the published site. Tracked: `index.html` (playground + bug catalog + paper), `reproduce.html` (bug reproducer), `style.css`, `kstep.mjs`, `figures/`, `assets/` (paper PDF), `coi-serviceworker.min.js`. Generated, gitignored: `qemu/` (from `build.sh`) and `data.json` (from `deploy.sh`) |
 | `site/kstep.mjs` | shared by the page and `run.mjs`: QEMU arguments, image loading, output plumbing, completion detection |
 | `build.sh` | `setup` (apt, emsdk, meson), `deps` (zlib, libffi, pixman, glib for wasm64), `qemu` (x86_64-softmmu into `site/qemu/`) |
 | `deploy.sh` | writes `site/data.json` (the bug table from kSTEP's `reproduce.py` and README, image URLs, version stamp) and force-pushes `site/` as the orphan `gh-pages` branch |
 | `serve.sh` | same `data.json`, served locally with `python3 -m http.server` |
 | `run.mjs` | the same run, headless under Node (>= 20): for timing and for comparing traces against native QEMU |
-| `cli.mjs` | drives kSTEP's `cli` driver (kmod/cli) over a fourth serial port: the interactive round-robin demo, headless |
+| `cli.mjs` | drives kSTEP's `cli` driver (kmod/cli.c) over the ttyS1 JSON port: the round-robin demo, headless |
 | `site/index.html` | the front page: the playground, which boots a kernel with the `cli` driver on a configurable machine (sockets × clusters × cores × threads, per-core capacity), creates tasks and ticks the scheduler; a timeline of who ran on which CPU, and a table of each task's counters with nice, affinity, pause/wake and kill controls |
 
 `KSTEP_DIR` is the kSTEP checkout; it defaults to `../..` (this repo as kSTEP's
