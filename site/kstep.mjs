@@ -6,13 +6,13 @@
 //
 // files: { kernel, rootfs, bios: { 'bios-256k.bin': ..., } } as Uint8Array / ArrayBuffer.
 // wasmBinary (optional): the .wasm bytes, if the caller fetched them itself (e.g. to show progress).
-// cli (optional): if true, a fourth serial port (/dev/ttyS3 in the guest) is wired to an
-// in-page device: `send(line)` on the returned object queues a command line for the guest, and
-// every line the guest writes arrives as onLine('cli', line). Used with kSTEP's `cli` driver.
+// cli (optional): if true, the JSON port (/dev/ttyS1 in the guest) is also readable by the
+// guest: `send(line)` on the returned object queues a command line for kSTEP's `cli` driver,
+// whose replies come back among the 'jsonl' lines (they have an "ok" field, events a "type").
 // onLine(channel, line) is called for every complete line, channel 'console' (kernel
-// console, chardev 0) or 'jsonl' (driver output, chardev 1); coverage (chardev 2) is
-// dropped. QEMU does not exit on guest reboot under Emscripten, so `done` resolves when
-// the console shows the reboot or a kernel panic.
+// console, chardev 0), 'jsonl' (structured output, chardev 1) or 'cov' (coverage, chardev
+// 2). QEMU does not exit on guest reboot under Emscripten, so `done` resolves when the
+// console shows the reboot or a kernel panic.
 
 export const BIOS = ['bios-256k.bin', 'linuxboot_dma.bin', 'kvmvapic.bin'];
 
@@ -34,22 +34,22 @@ export function qemuArgs({ driver, smp, mem, cli = false, params }) {
     '-accel', 'tcg,tb-size=64,thread=multi',
     '-kernel', '/kernel', '-initrd', '/rootfs.cpio', '-append', bootArgs({ driver, smp, params }),
     '-nographic', '-nodefaults', '-no-reboot',
-    // /dev/kstep0..2 are Emscripten device nodes whose write callbacks push bytes to us.
+    // /dev/kstep0..2 are Emscripten device nodes whose write callbacks push bytes to us
+    // (ttyS0 console, ttyS1 JSON, ttyS2 coverage). The cli driver also reads commands from
+    // ttyS1, so that one becomes a pipe chardev (opened read-write) on a device whose poll
+    // op tells QEMU when a command is waiting.
     '-chardev', 'file,id=c0,path=/dev/kstep0', '-serial', 'chardev:c0',
-    '-chardev', 'file,id=c1,path=/dev/kstep1', '-serial', 'chardev:c1',
+    '-chardev', `${cli ? 'pipe' : 'file'},id=c1,path=/dev/kstep1`, '-serial', 'chardev:c1',
     '-chardev', 'file,id=c2,path=/dev/kstep2', '-serial', 'chardev:c2',
-    // A pipe chardev on a single path is opened read-write; the device node's poll op tells
-    // QEMU when a command is waiting, so the guest can read as well as write.
-    ...(cli ? ['-chardev', 'pipe,id=c3,path=/dev/kstep3', '-serial', 'chardev:c3'] : []),
   ];
 }
 
 export async function runKstep(Module, { files, driver, smp, mem, onLine, locateFile, wasmBinary, cli = false, params, log = console.error }) {
   let resolveDone;
   const done = new Promise(r => { resolveDone = r; });
-  const channels = { 0: 'console', 1: 'jsonl', 3: 'cli' };
-  const lines = { console: '', jsonl: '', cli: '' };
-  const inq = [];   // bytes queued for the guest's ttyS3
+  const channels = { 0: 'console', 1: 'jsonl', 2: 'cov' };
+  const lines = { console: '', jsonl: '', cov: '' };
+  const inq = [];   // bytes queued for the guest's ttyS1 (cli commands)
   const send = (line) => { for (const b of new TextEncoder().encode(line + '\n')) inq.push(b); };
   const sink = (i) => (byte) => {
     const ch = channels[i];
@@ -68,11 +68,11 @@ export async function runKstep(Module, { files, driver, smp, mem, onLine, locate
       for (const [name, data] of Object.entries(files.bios)) m.FS.writeFile(`/bios/${name}`, new Uint8Array(data));
       m.FS.writeFile('/kernel', new Uint8Array(files.kernel));
       m.FS.writeFile('/rootfs.cpio', new Uint8Array(files.rootfs));
-      for (let i = 0; i < 3; i++) m.FS.createDevice('/dev', `kstep${i}`, null, sink(i));
+      for (let i = 0; i < 3; i++) if (i !== 1 || !cli) m.FS.createDevice('/dev', `kstep${i}`, null, sink(i));
       if (cli) {
-        // Bidirectional device for the command channel. FS ops run on the main thread (QEMU's
-        // thread is proxied to it), so the queue is plain JS state.
-        const out = sink(3), dev = m.FS.makedev(64, 3);
+        // Bidirectional device for ttyS1. FS ops run on the main thread (QEMU's thread is
+        // proxied to it), so the queue is plain JS state.
+        const out = sink(1), dev = m.FS.makedev(64, 1);
         m.FS.registerDevice(dev, {
           open(stream) { stream.seekable = false; },
           close() {},
@@ -85,7 +85,7 @@ export async function runKstep(Module, { files, driver, smp, mem, onLine, locate
           write(stream, buffer, offset, length) { for (let i = 0; i < length; i++) out(buffer[offset + i]); return length; },
           poll() { return (inq.length ? 1 : 0) | 4; },  // POLLIN when a command is queued, always POLLOUT
         });
-        m.FS.mkdev('/dev/kstep3', 0o666, dev);
+        m.FS.mkdev('/dev/kstep1', 0o666, dev);
       }
     }],
     print: (s) => log('[qemu] ' + s),

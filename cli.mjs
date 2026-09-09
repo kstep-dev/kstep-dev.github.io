@@ -14,13 +14,13 @@ const kstep = process.env.KSTEP_DIR ?? (fs.existsSync(path.join(W, '..', '..', '
 const kdir = path.join(kstep, 'build', kernel), qdir = path.join(W, 'site', 'qemu');
 const Module = (await import(path.join(qdir, 'qemu-system-x86_64.js'))).default;
 
-// Replies arrive as 'cli' lines; commands are answered strictly in order.
+// Replies arrive on the trace ('jsonl' lines with an "ok" field), strictly in command order.
 const waiters = [];
 const { send } = await runKstep(Module, {
   files: { kernel: fs.readFileSync(path.join(kdir, 'kernel')), rootfs: fs.readFileSync(path.join(kdir, 'rootfs.cpio')),
            bios: Object.fromEntries(BIOS.map(f => [f, fs.readFileSync(path.join(qdir, f))])) },
   driver: 'cli', smp: cpus + 1, mem: 128, cli: true,
-  onLine: (ch, line) => { if (ch === 'cli') waiters.shift()?.(JSON.parse(line)); },
+  onLine: (ch, line) => { if (ch === 'jsonl') { const o = JSON.parse(line); if ('ok' in o) waiters.shift()?.(o); } },
 });
 const cmd = (line) => new Promise(r => { waiters.push(r); if (line !== null) send(line); });
 

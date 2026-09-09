@@ -50,6 +50,7 @@
   th:first-child, td:first-child { text-align: left; }
   pre { margin: 0; height: 12rem; overflow: auto; padding: .5rem .7rem; border: 1px solid GrayText; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
   pre .err { color: crimson; }
+  pre .event { opacity: .6; }
   details { margin-top: 1.2rem; }
   details summary { cursor: pointer; font-weight: 600; font-size: 1rem; }
   details summary .hint { font-weight: normal; font-size: .85rem; }
@@ -77,14 +78,15 @@
 <p class="hint" id="cpu-hint"></p>
 
 <h2>Timeline <span><span id="clock" hidden><label><input id="speed" type="number" min="0" max="1000" step="10" value="20" style="width:4.2rem" title="ticks per second; 0 stops the clock"> ticks/s</label>
-  <button id="step" title="stop the clock and advance exactly one tick">step</button></span></h2>
+  <button id="step" title="stop the clock and advance exactly one tick">step</button>
+  <span class="hint" title="a load_balance event from the trace: the marked CPU ran the balancer in that tick">▼ load balance</span></span></h2>
 <canvas id="timeline"></canvas>
 <div id="scroll"><div id="spacer"></div></div>
 
 <h2>Tasks <span><button id="create" hidden>create task</button></span></h2>
 <table id="tasks"><thead><tr><th></th><th>task</th><th>state</th><th>cpu</th><th>nice</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th><th>affinity</th><th></th></tr></thead><tbody></tbody></table>
 
-<details><summary>kSTEP commands</summary><pre id="log"></pre></details>
+<details><summary>kSTEP trace</summary><pre id="log"></pre></details>
 <details><summary>Kernel console</summary><pre id="console"></pre></details>
 
 <script src="coi-serviceworker.min.js"></script>
@@ -101,6 +103,7 @@ const { BIOS, runKstep } = await import(`./kstep.mjs?v=${V}`);
 // ---- session state ----
 const tasks = [];            // [{pid, label, stat, alive}] in creation order
 const timeline = [];         // per tick: [pid on CPU 1, pid on CPU 2, ...] (0 = idle)
+const balances = [];         // load_balance trace events: {tick: column they happened in, cpu: dst_cpu}
 let ncpus = 1;
 const labelOf = (pid) => tasks.find(t => t.pid === pid)?.label ?? String(pid);
 // Colours are fixed per creation order, so a task keeps its colour in the timeline after it exits.
@@ -141,8 +144,9 @@ function draw() {
   const last = Math.min(timeline.length, first + visible);
   const fg = getComputedStyle(document.body).color;
   ctx.textBaseline = 'middle';
-  let y = 2;
+  let y = 2; const bandTop = [];
   for (let cpu = 0; cpu < ncpus; cpu++) {
+    bandTop.push(y);
     ctx.font = 'bold 11px system-ui'; ctx.fillStyle = fg; ctx.globalAlpha = 0.8; ctx.fillText(`cpu${cpu + 1}`, 2, y + ROW / 2); ctx.globalAlpha = 1;
     ctx.fillStyle = 'color-mix(in srgb, GrayText 20%, transparent)';          // idle stretches
     for (let c = first; c < last; c++) if (!timeline[c][cpu]) ctx.fillRect(LABEL_W + (c - first) * CELL, y, CELL - 1, bandH(cpu) - BAND_GAP);
@@ -159,6 +163,12 @@ function draw() {
       ctx.strokeStyle = fg; ctx.globalAlpha = [0.15, 0.4, 0.7, 0.9][w]; ctx.lineWidth = [1, 1, 2, 3][w];
       ctx.beginPath(); ctx.moveTo(0, y - BAND_GAP / 2); ctx.lineTo(W, y - BAND_GAP / 2); ctx.stroke(); ctx.globalAlpha = 1; ctx.lineWidth = 1;
     }
+  }
+  // load balance markers: a small triangle at the top of the destination CPU's band
+  ctx.fillStyle = fg;
+  for (const b of balances) if (b.tick >= first && b.tick < last && b.cpu >= 1 && b.cpu <= ncpus) {
+    const x = LABEL_W + (b.tick - first) * CELL, ty = bandTop[b.cpu - 1];
+    ctx.beginPath(); ctx.moveTo(x, ty); ctx.lineTo(x + CELL - 1, ty); ctx.lineTo(x + (CELL - 1) / 2, ty + 5); ctx.fill();
   }
   ctx.fillStyle = fg; ctx.globalAlpha = 0.5; ctx.font = '10px system-ui';   // tick numbers every 10 columns
   for (let c = first - (first % 10); c < first + visible; c += 10) if (c >= first) ctx.fillText(String(c), LABEL_W + (c - first) * CELL, H - 6);
@@ -349,7 +359,12 @@ async function boot() {
       locateFile: (f) => `qemu/${f}?v=${V}`,
       onLine: (ch, line) => {
         if (ch === 'console') { con.append(line + '\n'); con.scrollTop = con.scrollHeight; if (line.includes('Kernel panic')) { setStatus('kernel panic', true); $('speed').value = 0; schedule(); } }
-        else if (ch === 'cli') waiters.shift()?.(JSON.parse(line));
+        else if (ch === 'jsonl') {
+          // one ordered stream: command replies ("ok") interleaved with trace events ("type")
+          const o = JSON.parse(line);
+          if ('ok' in o) waiters.shift()?.(o);
+          else if (o.type === 'load_balance') { append(line, 'event'); balances.push({ tick: timeline.length, cpu: o.dst_cpu }); }
+        }
       },
     });
     send = r.send;
