@@ -159,7 +159,7 @@ async function run(b, variant) {
   const setStatus = (s, cls = '') => { status.textContent = `${((performance.now() - t0) / 1000).toFixed(1)}s ${s}`; status.className = cls; };
   // Lines are appended to the panes in 50 ms batches; each pane follows its tail unless scrolled up.
   const panes = { console: { el: con, pending: '' }, jsonl: { el: out, pending: '' } };
-  let timer = 0;
+  let timer = 0, finished = false;
   const flush = () => {
     timer = 0;
     for (const p of Object.values(panes)) {
@@ -202,9 +202,10 @@ async function run(b, variant) {
       files: { kernel, rootfs, bios: Object.fromEntries(BIOS.map((f, i) => [f, bios[i]])) },
       driver: b.name, smp: b.num_cpus, mem: b.mem_mb,
       locateFile: (f) => `qemu/${f}?v=${V}`, wasmBinary,
-      onLine: (ch, line) => { panes[ch].pending += line + '\n'; if (!timer) timer = setTimeout(flush, 50); if (ch === 'console') setStatus('running'); },
+      onLine: (ch, line) => { panes[ch].pending += line + '\n'; if (!timer) timer = setTimeout(flush, 50); if (ch === 'console' && !finished) setStatus('running'); },
     });
     const { panic } = await done;
+    finished = true;   // the guest may print a few more lines after the reboot line
     flush(); enableActions(true);
     setStatus(panic ? 'kernel panic' : 'done', panic ? 'bad' : 'ok');
   } catch (e) {
