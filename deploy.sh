@@ -2,7 +2,7 @@
 # Generate site/data.json and (unless --stage-only) force-push site/ as the gh-pages
 # branch; history is not kept there.
 #   ./deploy.sh [--stage-only]
-# site/ = index.html, kstep.mjs, figures/, coi-serviceworker.min.js (tracked) + qemu/ (from build.sh) + data.json.
+# site/ = index.html, reproduce.html, kstep.mjs, figures/, coi-serviceworker.min.js (tracked) + qemu/ (from build.sh) + data.json.
 # The browser fetches kernel images from the kstep-dev/build repo on GitHub, at the commit
 # the kSTEP `build` submodule pins, so the site carries no images.
 set -euo pipefail
@@ -48,7 +48,7 @@ for b in reproduce.BUGS + getattr(reproduce, "BUGS_EXTRA", []):
     if not imgs or b.mem_mb > MAX_MEM_MB: continue
     bugs.append({"name": b.name, "title": titles.get(b.name, b.name), "num_cpus": b.num_cpus, "mem_mb": b.mem_mb,
                  "images": imgs, **rows.get(b.name, {"driver_url": None, "fixes": [], "plot": None})})
-# Playground (play.html): a plain kernel whose kmod has the `cli` driver. Served from the same
+# Playground (index.html): a plain kernel whose kmod has the `cli` driver. Served from the same
 # base unless PLAYGROUND_LOCAL points at a local build dir with kernel + rootfs.cpio (then the
 # images are copied into site/images/ for local testing).
 import os

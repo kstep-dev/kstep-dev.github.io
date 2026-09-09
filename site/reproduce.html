@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kSTEP: reproduce a scheduler bug</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0 auto; padding: 0 1rem 3rem; max-width: 60rem; font: 15px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 1.6rem; margin: 1.2rem 0 .2rem; }
+  h1 small { font-weight: normal; font-size: 1rem; color: GrayText; margin-left: .5rem; }
+  h2 { font-size: 1.15rem; margin: 2rem 0 .5rem; border-bottom: 1px solid GrayText; padding-bottom: .2rem; }
+  header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+  nav { margin-top: 1.4rem; white-space: nowrap; }
+  nav a { margin-left: 1rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid color-mix(in srgb, GrayText 40%, transparent); vertical-align: top; }
+  th { font-weight: 600; }
+  td.act { white-space: nowrap; }
+  tr.selected td { background: color-mix(in srgb, Highlight 12%, transparent); }
+  button { font: inherit; font-size: .88rem; padding: .1rem .55rem; cursor: pointer; }
+  button:disabled { cursor: default; opacity: .6; }
+  #runbox { margin-top: 1rem; }
+  #runhead { display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap; }
+  #runhead b { font-size: 1rem; }
+  #status { color: GrayText; font-weight: normal; font-variant-numeric: tabular-nums; margin-left: .6rem; }
+  #status.ok { color: green; } #status.bad { color: crimson; }
+  #panes { display: grid; grid-template-columns: 3fr 2fr; gap: .8rem; margin-top: .6rem; }
+  @media (max-width: 800px) { #panes { grid-template-columns: 1fr; } }
+  .pane { min-width: 0; }   /* let grid cells shrink; long console lines scroll inside the pane */
+  .pane h3 { font-size: .8rem; font-weight: 600; margin: 0 0 .25rem; display: flex; justify-content: space-between; align-items: center; }
+  .pane h3 span button { margin-left: .3rem; }
+  .pane pre.idle { color: GrayText; white-space: pre-wrap; }
+  .pane pre { margin: 0; height: 24rem; overflow: auto; max-width: 100%; padding: .5rem .7rem; border: 1px solid GrayText; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+  #plot { display: block; max-height: 18rem; max-width: 100%; width: auto; margin: .6rem auto; }
+  #plot[hidden] { display: none; }
+  figure { margin: 1.2rem 0; text-align: center; }
+  figure img { max-width: 100%; max-height: 22rem; }
+
+  #warn { color: crimson; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>kSTEP: Kernel Scheduler Test and Evaluation Platform</h1>
+  </div>
+  <nav><a href="./">Playground</a><a href="assets/paper-osdi26.pdf">Paper</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
+</header>
+
+<h2>Reproduce a Linux kernel scheduler bug in your browser</h2>
+<p>Each row is a real Linux CPU scheduler bug with a kSTEP driver that triggers it.
+<b>buggy</b> boots the kernel from just before the fix, <b>fixed</b> the kernel with the fix.
+A run takes about ten seconds. The <a href="./">front page</a> has the interactive playground and more about kSTEP.</p>
+<p id="warn"></p>
+<div id="runbox">
+  <div id="runhead"><b id="runtitle">Nothing running yet: press buggy or fixed in the table below.</b></div>
+  <img id="plot" hidden alt="buggy vs fixed trace plot from the paper's results">
+  <div id="panes">
+    <div class="pane"><h3><span>kernel console <span id="status"></span></span><span><button data-copy="console">copy</button></span></h3><pre id="console" class="idle">The kernel boots here: SeaBIOS, then Linux with kSTEP's boot arguments, then the kSTEP module loads the driver. About ten seconds.</pre></div>
+    <div class="pane"><h3>driver output <span><button data-copy="jsonl">copy</button></span></h3><pre id="jsonl" class="idle">The driver's trace streams here, one JSON record per scheduler event; the same records the paper's plots are drawn from.</pre></div>
+  </div>
+</div>
+
+
+
+<table id="bugs">
+  <thead><tr><th>Bug</th><th>Driver</th><th>Fix</th><th>Run</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<!-- GitHub Pages cannot set COOP/COEP headers; this service worker adds them on reload. -->
+<script src="coi-serviceworker.min.js"></script>
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const warn = $('warn'), status = $('status'), con = $('console'), out = $('jsonl');
+// Threads need SharedArrayBuffer, which needs the COOP/COEP headers the service worker adds.
+// On the first visit the worker registers and reloads the page by itself, so only complain
+// if it is still missing afterwards (hard reloads bypass service workers; private browsing
+// may disable them).
+if (typeof SharedArrayBuffer === 'undefined')
+  setTimeout(() => { if (typeof SharedArrayBuffer === 'undefined') warn.textContent =
+    'This page needs SharedArrayBuffer, which the service worker provides. Do a normal reload (hard reloads bypass it); private browsing may block it entirely.'; }, 3000);
+
+// data.json (generated by deploy.sh): {version, base, bugs:[{name, title, num_cpus, mem_mb, images:{buggy,fixed}, driver_url, fixes, plot}]}.
+// Images are fetched from `base`, the kstep-dev/build repo on GitHub at the commit kSTEP pins.
+let V = '', base = '', bugs = [];
+try { ({ version: V, base, bugs } = await (await fetch('data.json', { cache: 'no-store' })).json()); }
+catch (e) { warn.textContent = 'data.json failed: ' + e.message; }
+const { BIOS, runKstep } = await import(`./kstep.mjs?v=${V}`);
+
+const link = (text, href) => { const a = document.createElement('a'); a.textContent = text; a.href = href; return a; };
+const tbody = $('bugs').querySelector('tbody');
+for (const b of bugs) {
+  const tr = tbody.insertRow(); tr.dataset.bug = b.name;
+  tr.insertCell().textContent = b.title;
+  const d = tr.insertCell(); if (b.driver_url) d.append(link(b.name + '.c', b.driver_url));
+  const f = tr.insertCell(); b.fixes.forEach((x, i) => { if (i) f.append(', '); f.append(link(x.label, x.url)); });
+  const act = tr.insertCell(); act.className = 'act';
+  for (const v of ['buggy', 'fixed']) {
+    if (!b.images[v]) continue;
+    const btn = document.createElement('button'); btn.textContent = v; btn.onclick = () => run(b, v); act.append(btn);
+    if (v === 'buggy') act.append(' ');
+  }
+}
+
+// Copy buttons copy the pane's current text.
+document.querySelectorAll('.pane button').forEach(b => {
+  b.disabled = true;
+  b.onclick = () => navigator.clipboard.writeText($(b.dataset.copy).textContent)
+    .then(() => { b.textContent = 'copied'; setTimeout(() => b.textContent = 'copy', 1200); });
+});
+const enableActions = (on) => document.querySelectorAll('.pane button').forEach(b => b.disabled = !on);
+
+// QEMU cannot be stopped or restarted inside the page (it never exits under Emscripten), so once
+// a run has started, choosing another bug (even mid-run) reloads the page, which ends the current
+// QEMU, and starts the new one from sessionStorage.
+let started = false;
+async function run(b, variant) {
+  if (started) { sessionStorage.setItem('kstep.run', JSON.stringify({ bug: b.name, variant })); location.replace(location.pathname); return; }
+  started = true;
+  tbody.querySelectorAll('tr').forEach(tr => tr.classList.toggle('selected', tr.dataset.bug === b.name));
+  con.textContent = ''; out.textContent = ''; con.classList.remove('idle'); out.classList.remove('idle');
+  $('runtitle').textContent = `${b.title}, ${variant} kernel`;
+  $('plot').hidden = true;
+  if (b.plot) { $('plot').onload = () => { $('plot').hidden = false; }; $('plot').onerror = () => { $('plot').hidden = true; }; $('plot').src = b.plot; }
+  $('runbox').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const t0 = performance.now();
+  const setStatus = (s, cls = '') => { status.textContent = `${((performance.now() - t0) / 1000).toFixed(1)}s ${s}`; status.className = cls; };
+  // Lines are appended to the panes in 50 ms batches; each pane follows its tail unless scrolled up.
+  const panes = { console: { el: con, pending: '' }, jsonl: { el: out, pending: '' } };
+  let timer = 0, finished = false;
+  const flush = () => {
+    timer = 0;
+    for (const p of Object.values(panes)) {
+      if (!p.pending) continue;
+      const atBottom = p.el.scrollHeight - p.el.scrollTop - p.el.clientHeight < 40;
+      p.el.append(p.pending); p.pending = '';
+      if (atBottom) p.el.scrollTop = p.el.scrollHeight;
+    }
+  };
+  try {
+    setStatus('downloading');
+    const image = b.images[variant];
+    // Every download (QEMU wasm, kernel, initramfs, BIOS) streams in with progress. A total is
+    // only shown when all sizes are known and not compressed on the wire.
+    const progress = {};
+    const report = () => {
+      const p = Object.values(progress), got = p.reduce((a, x) => a + x[0], 0);
+      const total = p.every(x => x[1]) ? p.reduce((a, x) => a + x[1], 0) : 0;
+      setStatus(`downloading ${(got / 1048576).toFixed(1)}${total ? ' / ' + (total / 1048576).toFixed(1) : ''} MB`);
+    };
+    const get = async (u) => {
+      const r = await fetch(u);
+      if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`);
+      const enc = r.headers.get('content-encoding');
+      const total = enc && enc !== 'identity' ? 0 : +r.headers.get('content-length') || 0, chunks = []; let got = 0;
+      for (const reader = r.body.getReader(); ;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value); got += value.length; progress[u] = [got, total]; report();
+      }
+      const buf = new Uint8Array(got); let o = 0; for (const c of chunks) { buf.set(c, o); o += c.length; }
+      return buf.buffer;
+    };
+    const [wasmBinary, kernel, rootfs, { default: Module }, ...bios] = await Promise.all([
+      get(`qemu/qemu-system-x86_64.wasm?v=${V}`), get(`${base}/${image}/kernel`), get(`${base}/${image}/rootfs.cpio`),
+      import(`./qemu/qemu-system-x86_64.js?v=${V}`), ...BIOS.map(f => get(`qemu/${f}?v=${V}`)),
+    ]);
+    setStatus('starting qemu');
+    const { done } = await runKstep(Module, {
+      files: { kernel, rootfs, bios: Object.fromEntries(BIOS.map((f, i) => [f, bios[i]])) },
+      driver: b.name, smp: b.num_cpus, mem: b.mem_mb,
+      locateFile: (f) => `qemu/${f}?v=${V}`, wasmBinary,
+      onLine: (ch, line) => { panes[ch].pending += line + '\n'; if (!timer) timer = setTimeout(flush, 50); if (ch === 'console' && !finished) setStatus('running'); },
+    });
+    const { panic } = await done;
+    finished = true;   // the guest may print a few more lines after the reboot line
+    flush(); enableActions(true);
+    setStatus(panic ? 'kernel panic' : 'done', panic ? 'bad' : 'ok');
+  } catch (e) {
+    setStatus('error: ' + e.message, 'bad'); console.error(e);
+  }
+}
+
+// Start a run right away if one was handed over across a reload (sessionStorage) or asked
+// for in the URL, e.g. ?bug=sync_wakeup&kernel=buggy (used by links in the kSTEP README).
+const pending = sessionStorage.getItem('kstep.run');
+sessionStorage.removeItem('kstep.run');
+const q = new URLSearchParams(location.search);
+const want = pending ? JSON.parse(pending) : { bug: q.get('bug'), variant: q.get('kernel') };
+const b0 = bugs.find(b => b.name === want.bug);
+if (b0 && b0.images[want.variant]) run(b0, want.variant);
+</script>
+</body>
+</html>
