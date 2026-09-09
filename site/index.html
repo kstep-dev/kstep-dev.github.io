@@ -24,7 +24,7 @@
   td input.bad { border-color: crimson; color: crimson; }
   td button { padding: 0 .5rem; font-size: .8rem; }
   td select { padding: 0 .2rem; font-size: .85rem; }
-  #status { color: GrayText; font-size: .9rem; font-variant-numeric: tabular-nums; }
+  #status { color: GrayText; font-weight: normal; font-variant-numeric: tabular-nums; margin-left: .4rem; }
   #cpu-hint { margin: 0; }
   #cpu-hint:empty { display: none; }
   #cpu-hint.bad { color: crimson; }
@@ -69,7 +69,7 @@
 <body>
 <header>
   <h1>kSTEP: Kernel Scheduler Test and Evaluation Platform</h1>
-  <nav><span id="status">loading</span><a href="reproduce.html">Reproduce</a><a href="assets/paper-osdi26.pdf">Paper</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
+  <nav><a href="reproduce.html">Reproduce</a><a href="assets/paper-osdi26.pdf">Paper</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
 </header>
 <p>kSTEP runs the unmodified Linux CPU scheduler deterministically, one tick at a time, on CPUs it isolates. A Linux kernel boots below when the page loads, with kSTEP holding its scheduler clock. Nothing happens in it except what you ask for: create tasks, change their nice value or affinity, pause or kill them, pick the machine's topology, and advance the scheduler one tick at a time.</p>
 
@@ -95,7 +95,7 @@
 
 <div id="panes">
   <div class="pane"><h3>kSTEP trace</h3><pre id="log"></pre></div>
-  <div class="pane"><h3>kernel console</h3><pre id="console"></pre></div>
+  <div class="pane"><h3>kernel console <span id="status">loading</span></h3><pre id="console"></pre></div>
 </div>
 
 <h2>Reproduced bugs</h2>
