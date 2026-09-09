@@ -13,7 +13,7 @@
   h2 { font-size: 1rem; margin: 1.4rem 0 .4rem; border-bottom: 1px solid GrayText; padding-bottom: .15rem; display: flex; justify-content: space-between; align-items: baseline; }
   h2 span { font-weight: normal; font-size: .85rem; color: GrayText; }
   #toolbar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .8rem 0; }
-  button, input { font: inherit; padding: .2rem .6rem; }
+  button, input, select { font: inherit; padding: .2rem .6rem; }
   button:disabled { opacity: .5; }
   #cmd { flex: 1; min-width: 12rem; font-family: ui-monospace, monospace; }
   #status { color: GrayText; font-variant-numeric: tabular-nums; }
@@ -43,10 +43,15 @@ The timeline shows which task ran after each tick; the table shows each task's s
   <button class="verb" data-ticks="1" disabled>tick</button>
   <button class="verb" data-ticks="10" disabled>tick ×10</button>
   <button class="verb" data-ticks="100" disabled>tick ×100</button>
+  <button id="auto" class="verb" disabled>auto tick</button>
+  <select id="rate" class="verb" disabled title="ticks per second while auto ticking">
+    <option value="1">1/s</option><option value="2">2/s</option><option value="5" selected>5/s</option>
+    <option value="10">10/s</option><option value="20">20/s</option><option value="0">max</option>
+  </select>
   <input id="cmd" placeholder="or type a command (create, tick, curr, stat <pid>) and press Enter" disabled>
   <span id="status">not booted</span>
 </div>
-<p class="hint" id="hint">Space also ticks once. Tasks are labelled t0, t1, … in creation order; the kernel knows them by pid.</p>
+<p class="hint" id="hint">Space ticks once; auto tick keeps ticking at the chosen rate until paused, and other commands still work in between. Tasks are labelled t0, t1, … in creation order; the kernel knows them by pid.</p>
 
 <h2>Timeline <span>one column per tick, one row per task</span></h2>
 <canvas id="timeline"></canvas>
@@ -129,14 +134,31 @@ let busy = false;
 async function run(fn) {               // serialise UI actions
   if (busy || !send) return; busy = true;
   document.querySelectorAll('.verb, #cmd').forEach(e => e.disabled = true);
-  try { await fn(); } catch (e) { setStatus('error: ' + e.message, true); }
+  $('auto').disabled = false;   // pause must stay clickable during a step
+  try { await fn(); } catch (e) { setStatus('error: ' + e.message, true); if (auto !== null) $('auto').click(); }
   document.querySelectorAll('.verb, #cmd').forEach(e => e.disabled = false);
   busy = false;
 }
-document.querySelectorAll('.verb').forEach(b => b.onclick = () => run(async () => {
+document.querySelectorAll('.verb[data-cmd], .verb[data-ticks]').forEach(b => b.onclick = () => run(async () => {
   if (b.dataset.cmd) return create();
   for (let i = 0; i < +b.dataset.ticks; i++) await step();
 }));
+
+// Auto tick: one step, wait for the selected interval, repeat, until paused. Each step goes
+// through run(), so a create or a typed command slips in between ticks instead of being lost.
+let auto = null;
+function autoTick() {
+  if (auto === null) return;
+  run(step).then(() => {
+    if (auto === null) return;
+    const rate = +$('rate').value;
+    auto = setTimeout(autoTick, rate ? 1000 / rate : 0);
+  });
+}
+$('auto').onclick = () => {
+  if (auto === null) { auto = setTimeout(autoTick, 0); $('auto').textContent = 'pause'; }
+  else { clearTimeout(auto); auto = null; $('auto').textContent = 'auto tick'; }
+};
 $('cmd').onkeydown = (e) => { if (e.key !== 'Enter') return; const line = $('cmd').value.trim(); $('cmd').value = ''; if (!line) return;
   run(async () => { if (line === 'create') return create(); if (line === 'tick') return step(); const r = await cmd(line); if (line.startsWith('stat') && r.ok) { const t = tasks.find(t => t.pid === r.pid); if (t) { t.stat = r; renderTasks(); } } }); };
 addEventListener('keydown', (e) => { if (e.key === ' ' && e.target === document.body) { e.preventDefault(); run(step); } });
