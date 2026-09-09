@@ -36,6 +36,7 @@ for line in readme.splitlines():
     if not m: continue
     path, rest = m.groups()
     name = re.sub(r"\.c$", "", path.rsplit("/", 1)[-1])
+    rest = rest.split("**Run in browser**")[0]   # the row's links back to this site are not fixes
     links = [(l, u) for l, u in re.findall(r"\[([^\]]+)\]\((\S+?)\)", rest) if not l.endswith(".jsonl")]
     links = [(l, u if u.startswith("http") else f"https://github.com/kstep-dev/kstep/blob/master/{u}") for l, u in links]
     plot = re.search(r"!\[\]\((\S+?)\)", line) or re.search(r'src="(\S+?)"', line)
