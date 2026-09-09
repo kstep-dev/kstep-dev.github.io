@@ -1,7 +1,7 @@
 # kSTEP on WebAssembly
 
 Runs [kSTEP](https://github.com/kstep-dev/kstep) unmodified inside a QEMU
-compiled to WebAssembly, in a browser at https://kstep-dev.github.io/web/ or
+compiled to WebAssembly, in a browser at https://kstep-dev.github.io/ or
 headless under Node. The x86_64 guest, the prebuilt kernel images committed in
 [kstep-dev/build](https://github.com/kstep-dev/build), and the boot arguments
 from kSTEP's `run.py` are used as-is. The page fetches the images from that
@@ -17,7 +17,7 @@ interpreter, about 4x slower for kSTEP.
 
 | File | Purpose |
 |------|---------|
-| `site/` | the published site: `index.html`, `kstep.mjs`, `figures/` and `coi-serviceworker.min.js` are tracked; `qemu/` (wasm, JS loader, SeaBIOS) is put there by `build.sh` and `data.json` by `deploy.sh`, both gitignored |
+| `site/` | the published site: `index.html`, `kstep.mjs`, `figures/`, `assets/` (paper PDF) and `coi-serviceworker.min.js` are tracked; `qemu/` (wasm, JS loader, SeaBIOS) is put there by `build.sh` and `data.json` by `deploy.sh`, both gitignored |
 | `build.sh` | `setup` (apt, emsdk 4.0.23, meson) -> `deps` (zlib, libffi, pixman, glib cross-built for wasm64) -> `qemu` (x86_64-softmmu, copied into `site/qemu/`) |
 | `deploy.sh` | writes `site/data.json` (version stamp, image base URL, and the bug catalog: `reproduce.py`'s Bug table joined with the README results table and the images in the build repo) and force-pushes `site/` as the orphan `gh-pages` branch |
 | `serve.sh` | same `data.json`, then `python3 -m http.server` on `site/` |
@@ -29,12 +29,12 @@ the reproduced bugs (title, driver source, fix commit, vCPUs) with a `buggy` and
 a `fixed` button per row. A run boots that image with the driver, vCPU count and
 RAM `reproduce.py` uses, streams the kernel console and the driver's
 `kstep.jsonl` into two panes with copy/download, and shows the paper's plot for
-comparison. Below it: the abstract, the architecture figure, and links. Bug
-titles come from the old site's cards (`docs/website`) when present, otherwise
-the driver name. A free-form mode (choose driver and sizes) is not exposed. `coi-serviceworker.min.js` (MIT,
+comparison. Below it: how kSTEP works (architecture figure) and links. Bug titles
+are the old site's card titles when `docs/website-archive` is present in the
+kSTEP checkout, otherwise the driver name. A free-form mode (choose driver and sizes) is not exposed. `coi-serviceworker.min.js` (MIT,
 gzuidhof/coi-serviceworker) adds the COOP/COEP headers static hosts cannot send.
 Toolchain and sources live under `build/` (gitignored). `KSTEP_DIR` points at a
-kSTEP checkout and defaults to `../..` (this repo as kSTEP's `docs/web`
+kSTEP checkout and defaults to `../..` (this repo as kSTEP's `docs/website`
 submodule) or `../kstep`; `run.mjs` reads images from `$KSTEP_DIR/build/<kernel>/`.
 
 ## Usage
@@ -43,7 +43,7 @@ submodule) or `../kstep`; `run.mjs` reads images from `$KSTEP_DIR/build/<kernel>
 ./build.sh                          # ~15 min first time; ./build.sh qemu rebuilds QEMU only (~1 min)
 ./run.mjs --kernel sync_wakeup_buggy # driver, vCPUs, RAM from reproduce.py via site/data.json; console -> stdout, status -> stderr, results -> results/<kernel>-<driver>/
 ./serve.sh 8080                     # http://localhost:8080/
-./deploy.sh                         # https://kstep-dev.github.io/web/
+./deploy.sh                         # https://kstep-dev.github.io/
 ```
 
 ## How it works

@@ -43,7 +43,7 @@
 <h1>kSTEP <small>Kernel Scheduler Test and Evaluation Platform</small></h1>
 <p class="authors">Tingjia Cao, Shawn (Wanxiang) Zhong, Caeden Whitaker, Ke Han, Andrea C. Arpaci-Dusseau, Remzi H. Arpaci-Dusseau. OSDI '26.</p>
 <nav>
-  <a href="https://kstep-dev.github.io/assets/paper-osdi26.pdf">Paper (PDF)</a>
+  <a href="assets/paper-osdi26.pdf">Paper (PDF)</a>
   <a href="https://github.com/kstep-dev/kstep">Code</a>
   <a href="https://github.com/kstep-dev/study">Bug study</a>
   <a href="https://github.com/kstep-dev/results">Results</a>
@@ -51,17 +51,11 @@
 
 <h2>Reproduce a scheduler bug in your browser</h2>
 <p>Each row is a real Linux CPU scheduler bug with a kSTEP driver that triggers it.
-<b>buggy</b> boots the kernel just before the fix, <b>fixed</b> the kernel with the fix, both inside
-QEMU compiled to WebAssembly, and streams the kernel console and the driver's trace below.
-The same driver and trace format produce the plots in the paper. A run takes about ten seconds.</p>
+<b>buggy</b> boots the kernel from just before the fix, <b>fixed</b> the kernel with the fix.
+A run takes about ten seconds.</p>
 <p id="warn"></p>
-<table id="bugs">
-  <thead><tr><th>Bug</th><th>Driver</th><th>Fix</th><th>vCPUs</th><th>Run</th></tr></thead>
-  <tbody></tbody>
-</table>
-
 <div id="runbox">
-  <div id="runhead"><b id="runtitle">Nothing running yet: press buggy or fixed on a row above.</b><span id="status">idle</span><button id="again" hidden>Run again</button></div>
+  <div id="runhead"><b id="runtitle">Nothing running yet: press buggy or fixed in the table below.</b><span id="status">idle</span><button id="again" hidden>Run again</button></div>
   <div id="panes">
     <div class="pane"><h3>kernel console <span><button data-copy="console">copy</button><button data-save="console">download</button></span></h3><pre id="console" class="idle">The kernel boots here: SeaBIOS, then Linux with kSTEP's boot arguments, then the kSTEP module loads the driver. About ten seconds.</pre></div>
     <div class="pane"><h3>driver output <span><button data-copy="jsonl">copy</button><button data-save="jsonl">download</button></span></h3><pre id="jsonl" class="idle">The driver's trace streams here, one JSON record per scheduler event; the same records the paper's plots are drawn from.</pre></div>
@@ -69,23 +63,24 @@ The same driver and trace format produce the plots in the paper. A run takes abo
   <img id="plot" hidden alt="buggy vs fixed trace plot from the paper's results">
 </div>
 
-<h2>Paper</h2>
-<p><a href="https://kstep-dev.github.io/assets/paper-osdi26.pdf">kSTEP: Characterization and Deterministic Testing of Linux CPU Scheduler Bugs</a>, OSDI '26.</p>
-<p>We present an in-depth study of CPU scheduler bugs, covering both functional violations and
-misalignments between implementation and policy. Our study shows that these bugs are hard to
-observe and even harder to trigger. To close this gap, we introduce kSTEP. kSTEP gives testers
-fine-grained control over scheduler-invoking events and runs them deterministically on isolated
-CPUs. kSTEP produces noise-free, repeatable traces that expose subtle behavior. We then build a
-coverage-guided fuzzer on top of kSTEP for automated CPU scheduler testing. We demonstrate
-kSTEP's effectiveness by reproducing seven real-world scheduler bugs and uncovering four new ones.</p>
-<figure><img src="figures/arch.svg" alt="kSTEP architecture"><figcaption>kSTEP architecture: a driver program declares a sequence of scheduler-invoking events; the kernel module dispatches them on isolated CPUs with mocked time, so the unmodified scheduler produces a repeatable trace.</figcaption></figure>
+
+
+<table id="bugs">
+  <thead><tr><th>Bug</th><th>Driver</th><th>Fix</th><th>vCPUs</th><th>Run</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<h2>How kSTEP works</h2>
+<figure><img src="figures/arch.svg" alt="kSTEP architecture"><figcaption>A driver program (kernel code, one per bug) declares a sequence of scheduler-invoking events: task creation, wakeups, sleeps, cgroup changes, ticks. The kSTEP module dispatches them on CPUs isolated from the rest of the system, with the scheduler clock and the tick under its control, so the unmodified scheduler runs the same code path it would in production and produces the same trace on every run. The trace above is that output; the plot compares it for the buggy and the fixed kernel.</figcaption></figure>
+<p>Details, the bug study behind the driver set, and the coverage-guided fuzzer built on kSTEP are in the
+<a href="assets/paper-osdi26.pdf">OSDI '26 paper</a>.</p>
 
 <h2>Resources</h2>
 <ul>
   <li><a href="https://github.com/kstep-dev/kstep">kstep</a>: framework, drivers, fuzzer, and automation scripts.</li>
   <li><a href="https://github.com/kstep-dev/study">study</a>: the bug study dataset and analysis.</li>
   <li><a href="https://github.com/kstep-dev/results">results</a>: buggy and fixed traces and plots for every reproduced bug.</li>
-  <li><a href="https://github.com/kstep-dev/web">web</a>: this page and the WebAssembly build of QEMU behind it.</li>
+  <li><a href="https://github.com/kstep-dev/kstep-dev.github.io">kstep-dev.github.io</a>: this page and the WebAssembly build of QEMU behind it.</li>
 </ul>
 
 <!-- GitHub Pages cannot set COOP/COEP headers; this service worker adds them on reload. -->
@@ -136,7 +131,6 @@ let started = false;
 async function run(b, variant) {
   if (started) return;  // QEMU does not exit cleanly under Emscripten; a second run reloads the page.
   started = true;
-  history.replaceState(null, '', '?' + new URLSearchParams({ bug: b.name, kernel: variant }));
   document.querySelectorAll('#bugs button').forEach(x => x.disabled = true);
   tbody.querySelectorAll('tr').forEach(tr => tr.classList.toggle('selected', tr.dataset.bug === b.name));
   con.textContent = ''; out.textContent = ''; con.classList.remove('idle'); out.classList.remove('idle');
@@ -178,13 +172,9 @@ async function run(b, variant) {
   } catch (e) {
     setStatus('error: ' + e.message, 'bad'); console.error(e);
   }
-  $('again').hidden = false; $('again').onclick = () => location.reload();
+  $('again').hidden = false; $('again').onclick = () => location.reload();   // QEMU cannot be restarted in-page
 }
 
-// A URL from a previous run (or shared) starts that run again.
-const q = new URLSearchParams(location.search);
-const b0 = bugs.find(b => b.name === q.get('bug'));
-if (b0 && b0.images[q.get('kernel')]) run(b0, q.get('kernel'));
 </script>
 </body>
 </html>

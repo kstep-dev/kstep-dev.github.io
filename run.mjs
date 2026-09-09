@@ -5,7 +5,7 @@
 //   (no system node? emsdk ships one: build/emsdk/node/*/bin/node run.mjs ...)
 //
 // Reads $KSTEP_DIR/build/<kernel>/{kernel,rootfs.cpio} (KSTEP_DIR defaults to ../.. as kSTEP's
-// docs/web submodule, else ../kstep) and the QEMU build from site/qemu/. Console -> stdout,
+// docs/website submodule, else ../kstep) and the QEMU build from site/qemu/. Console -> stdout,
 // status -> stderr, results -> --out (default results/<kernel>-<driver>/).
 // --driver defaults to the kernel name minus _buggy/_fixed; --smp/--mem to reproduce.py's
 // values when site/data.json exists, else 2 / 512.

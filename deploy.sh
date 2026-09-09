@@ -7,7 +7,7 @@
 # the kSTEP `build` submodule pins, so the site carries no images.
 set -euo pipefail
 W=$(cd "$(dirname "$0")" && pwd)
-# kSTEP checkout: ../.. when this repo is kSTEP's docs/web submodule, else a sibling ../kstep.
+# kSTEP checkout: ../.. when this repo is kSTEP's docs/website submodule, else a sibling ../kstep.
 KSTEP_DIR=${KSTEP_DIR:-$([ -f "$W/../../run.py" ] && echo "$W/../.." || echo "$W/../kstep")}
 [ -f "$W/site/qemu/qemu-system-x86_64.wasm" ] || { echo "no wasm build; run ./build.sh"; exit 1; }
 
@@ -26,7 +26,7 @@ MAX_MEM_MB = 1024   # fits the 2 GB wasm heap; long_balance (4096 MB) is left ou
 readme = open("README.md").read()
 titles = {}
 try:   # short human titles only exist on the old site; fall back to the driver name
-    old = open("docs/website/index.html").read()
+    old = open("docs/website-archive/index.html").read()
     titles = dict(re.findall(r"<span>(\w+)\.c</span>\s*<strong>(.*?)</strong>", old))
 except FileNotFoundError:
     pass
