@@ -23,9 +23,9 @@ const mem = Number(args.mem ?? 512);
 const outDir = args.out ?? path.join(W, 'results', `${kernel}-${driver}`);
 const kstep = process.env.KSTEP_DIR ?? (fs.existsSync(path.join(W, '..', '..', 'run.py')) ? path.join(W, '..', '..') : path.join(W, '..', 'kstep'));
 const kdir = path.join(kstep, 'build', kernel);
-const qdir = path.join(W, 'build', 'qemu');
+const qdir = path.join(W, 'site', 'qemu');
 
-const Module = (await import(path.join(qdir, 'build', 'qemu-system-x86_64.js'))).default;
+const Module = (await import(path.join(qdir, 'qemu-system-x86_64.js'))).default;
 const isol = smp > 2 ? `1-${smp - 1}` : '1';
 const bootArgs = `rw nokaslr loglevel=7 sched_verbose isolcpus=nohz,managed_irq,${isol} irqaffinity=0 rcu_nocbs=${isol} nohz_full=${isol} init=/user panic=-1 console=ttyS0 tsc=nowatchdog -- driver=${driver}`;
 const t0 = Date.now();
@@ -64,7 +64,7 @@ mod = await Module({
   preRun: [(m) => {
     m.FS.mkdir('/bios');
     for (const f of ['bios-256k.bin', 'linuxboot_dma.bin', 'kvmvapic.bin'])
-      m.FS.writeFile(`/bios/${f}`, fs.readFileSync(path.join(qdir, 'pc-bios', f)));
+      m.FS.writeFile(`/bios/${f}`, fs.readFileSync(path.join(qdir, f)));
     m.FS.writeFile('/kernel', fs.readFileSync(path.join(kdir, 'kernel')));
     m.FS.writeFile('/rootfs.cpio', fs.readFileSync(path.join(kdir, 'rootfs.cpio')));
     // /dev/kstep0..2 = chardevs char0..char2 = qemu.log, kstep.jsonl, kstep.cov

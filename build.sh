@@ -3,7 +3,7 @@
 #   ./build.sh            # all stages
 #   ./build.sh qemu       # just reconfigure+rebuild QEMU
 # Stages: setup (apt, emsdk, meson) -> deps (zlib, libffi, pixman, glib) -> qemu.
-# Output: build/qemu/build/qemu-system-x86_64.{js,wasm}
+# Output: site/qemu/ (qemu-system-x86_64.{js,wasm} + SeaBIOS blobs), served/deployed as-is
 set -euo pipefail
 W=$(cd "$(dirname "$0")" && pwd)
 stage=${1:-all}
@@ -96,7 +96,9 @@ qemu() {
     --without-default-features --with-coroutine=wasm \
     --extra-cflags="-O3 -g0 -matomics -mbulk-memory -DNDEBUG -sASYNCIFY=1 -pthread -sPROXY_TO_PTHREAD=1 -sFORCE_FILESYSTEM -sTOTAL_MEMORY=2300MB -sWASM_BIGINT -sMALLOC=mimalloc"
   emmake make -j"$(nproc)"
-  ls -la qemu-system-x86_64.js qemu-system-x86_64.wasm
+  mkdir -p "$W/site/qemu"
+  cp qemu-system-x86_64.js qemu-system-x86_64.wasm ../pc-bios/bios-256k.bin ../pc-bios/linuxboot_dma.bin ../pc-bios/kvmvapic.bin "$W/site/qemu/"
+  ls -la "$W/site/qemu"
 }
 
 case $stage in

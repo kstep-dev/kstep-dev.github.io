@@ -17,16 +17,19 @@ interpreter, about 4x slower for kSTEP.
 
 | File | Purpose |
 |------|---------|
-| `build.sh` | `setup` (apt, emsdk 4.0.23, meson) -> `deps` (zlib, libffi, pixman, glib cross-built for wasm64) -> `qemu` (x86_64-softmmu) |
-| `run.mjs`, `run.sh` | headless runner; `run.sh` finds emsdk's Node and passes `--wasm-lazy-compilation` |
-| `index.html` | browser UI: pick a kernel (driver, vCPUs, RAM prefilled from `reproduce.py`), watch the console and driver output stream, download results |
-| `coi-serviceworker.min.js` | adds the COOP/COEP headers static hosts cannot send (MIT, gzuidhof/coi-serviceworker) |
-| `deploy.sh` | stages page + wasm + SeaBIOS + `kernels.json` in `build/site` and force-pushes it as the orphan `gh-pages` branch |
-| `serve.sh` | stages the same site and serves it with `python3 -m http.server` |
+| `site/` | the published site: `index.html` and `coi-serviceworker.min.js` are tracked; `qemu/` (wasm, JS loader, SeaBIOS) is put there by `build.sh` and `kernels.json` by `deploy.sh`, both gitignored |
+| `build.sh` | `setup` (apt, emsdk 4.0.23, meson) -> `deps` (zlib, libffi, pixman, glib cross-built for wasm64) -> `qemu` (x86_64-softmmu, copied into `site/qemu/`) |
+| `deploy.sh` | writes `site/kernels.json` (version stamp, image base URL, kernel list with defaults from `reproduce.py`) and force-pushes `site/` as the orphan `gh-pages` branch |
+| `serve.sh` | same `kernels.json`, then `python3 -m http.server` on `site/` |
+| `run.mjs`, `run.sh` | headless test harness: runs a driver under Node with the same arguments and output plumbing as the page; used for timing and for byte-comparing traces against native QEMU |
 
-Everything generated lives under `build/` (gitignored). `KSTEP_DIR` points at a
+`index.html` lets you pick a kernel (driver, vCPUs, RAM prefilled from
+`reproduce.py`), streams the kernel console and the driver's `kstep.jsonl`, and
+offers the results as downloads. `coi-serviceworker.min.js` (MIT,
+gzuidhof/coi-serviceworker) adds the COOP/COEP headers static hosts cannot send.
+Toolchain and sources live under `build/` (gitignored). `KSTEP_DIR` points at a
 kSTEP checkout and defaults to `../..` (this repo as kSTEP's `docs/web`
-submodule) or `../kstep`. `run.sh` reads images from `$KSTEP_DIR/build/<kernel>/`.
+submodule) or `../kstep`; `run.sh` reads images from `$KSTEP_DIR/build/<kernel>/`.
 
 ## Usage
 
@@ -56,8 +59,9 @@ submodule) or `../kstep`. `run.sh` reads images from `$KSTEP_DIR/build/<kernel>/
   pointers in C, wasm32 output. It therefore runs on engines without Memory64
   (Safari, Chrome < 133, Firefox < 134). The heap ends up at 2 GB, so guest RAM
   is capped at 1024 MB and `long_balance` (4096 MB) does not fit.
-* **Caching.** `deploy.sh` stamps a version into the wasm/js/bios URLs so a
-  new deploy is never served from a browser's cache of the previous one.
+* **Caching.** The page fetches `kernels.json` uncached and appends its
+  `version` to the wasm/js/bios URLs, so a new deploy is never served from a
+  browser's cache of the previous one.
 
 ## Measured (aarch64 host, no KVM, Node 24)
 
