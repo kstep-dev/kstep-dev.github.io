@@ -31,13 +31,13 @@ the driver's `kstep.jsonl` with copy/download per pane. A free-form mode
 gzuidhof/coi-serviceworker) adds the COOP/COEP headers static hosts cannot send.
 Toolchain and sources live under `build/` (gitignored). `KSTEP_DIR` points at a
 kSTEP checkout and defaults to `../..` (this repo as kSTEP's `docs/web`
-submodule) or `../kstep`; `run.sh` reads images from `$KSTEP_DIR/build/<kernel>/`.
+submodule) or `../kstep`; `run.mjs` reads images from `$KSTEP_DIR/build/<kernel>/`.
 
 ## Usage
 
 ```sh
 ./build.sh                          # ~15 min first time; ./build.sh qemu rebuilds QEMU only (~1 min)
-./run.sh --kernel sync_wakeup_buggy # console -> stdout, status -> stderr, results -> results/<kernel>-<driver>/
+./run.mjs --kernel sync_wakeup_buggy # driver, vCPUs, RAM from reproduce.py; console -> stdout, status -> stderr, results -> results/<kernel>-<driver>/
 ./serve.sh 8080                     # http://localhost:8080/
 ./deploy.sh                         # https://kstep-dev.github.io/web/
 ```
