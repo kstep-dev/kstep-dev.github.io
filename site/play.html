@@ -79,7 +79,7 @@
 
 <h2>Timeline <span><span id="clock" hidden><label><input id="speed" type="number" min="0" max="1000" step="10" value="20" style="width:4.2rem" title="ticks per second; 0 stops the clock"> ticks/s</label>
   <button id="step" title="stop the clock and advance exactly one tick">step</button>
-  <span class="hint" title="a load_balance event from the trace: the marked CPU ran the balancer in that tick">▼ load balance</span></span></h2>
+  <span class="hint" title="trace events in that tick, on the destination CPU: hollow = its load balancer looked for work (after should_we_balance); filled = a task moved there, by balancing or wakeup placement">▽ balancer ran &nbsp;▼ task migrated</span></span></h2>
 <canvas id="timeline"></canvas>
 <div id="scroll"><div id="spacer"></div></div>
 
@@ -103,7 +103,7 @@ const { BIOS, runKstep } = await import(`./kstep.mjs?v=${V}`);
 // ---- session state ----
 const tasks = [];            // [{pid, label, stat, alive}] in creation order
 const timeline = [];         // per tick: [pid on CPU 1, pid on CPU 2, ...] (0 = idle)
-const balances = [];         // load_balance trace events: {tick: column they happened in, cpu: dst_cpu}
+const balances = [];         // trace events in the tick they happened: {tick, cpu: dst_cpu, pid} (pid only for migrate)
 let ncpus = 1;
 const labelOf = (pid) => tasks.find(t => t.pid === pid)?.label ?? String(pid);
 // Colours are fixed per creation order, so a task keeps its colour in the timeline after it exits.
@@ -164,11 +164,12 @@ function draw() {
       ctx.beginPath(); ctx.moveTo(0, y - BAND_GAP / 2); ctx.lineTo(W, y - BAND_GAP / 2); ctx.stroke(); ctx.globalAlpha = 1; ctx.lineWidth = 1;
     }
   }
-  // load balance markers: a small triangle at the top of the destination CPU's band
-  ctx.fillStyle = fg;
+  // markers at the top of the destination CPU's band: hollow triangle = its balancer looked
+  // for work (load_balance), filled triangle in the task's colour = a task moved there (migrate)
   for (const b of balances) if (b.tick >= first && b.tick < last && b.cpu >= 1 && b.cpu <= ncpus) {
     const x = LABEL_W + (b.tick - first) * CELL, ty = bandTop[b.cpu - 1];
-    ctx.beginPath(); ctx.moveTo(x, ty); ctx.lineTo(x + CELL - 1, ty); ctx.lineTo(x + (CELL - 1) / 2, ty + 5); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x + 0.5, ty + 0.5); ctx.lineTo(x + CELL - 1.5, ty + 0.5); ctx.lineTo(x + (CELL - 1) / 2, ty + 5.5); ctx.closePath();
+    if (b.pid) { ctx.fillStyle = colorOf(b.pid); ctx.fill(); } else { ctx.strokeStyle = fg; ctx.lineWidth = 1; ctx.stroke(); }
   }
   ctx.fillStyle = fg; ctx.globalAlpha = 0.5; ctx.font = '10px system-ui';   // tick numbers every 10 columns
   for (let c = first - (first % 10); c < first + visible; c += 10) if (c >= first) ctx.fillText(String(c), LABEL_W + (c - first) * CELL, H - 6);
@@ -363,7 +364,7 @@ async function boot() {
           // one ordered stream: command replies ("ok") interleaved with trace events ("type")
           const o = JSON.parse(line);
           if ('ok' in o) waiters.shift()?.(o);
-          else if (o.type === 'load_balance') { append(line, 'event'); balances.push({ tick: timeline.length, cpu: o.dst_cpu }); }
+          else if (o.type === 'load_balance' || o.type === 'migrate') { append(line, 'event'); balances.push({ tick: timeline.length, cpu: o.dst_cpu, pid: o.type === 'migrate' ? o.pid : 0 }); }
         }
       },
     });
