@@ -2,4 +2,4 @@ build/
 results/
 *.log
 site/qemu/
-site/kernels.json
+site/data.json

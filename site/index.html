@@ -5,81 +5,117 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>kSTEP</title>
 <style>
-  :root { color-scheme: light dark; --fg: #1a1a1a; --bg: #f7f7f5; --mute: #6b6b6b; --line: #d9d9d4; --accent: #2b6cb0; --ok: #2f855a; --bad: #c53030; --con: #111; --confg: #d8d8d8; }
-  @media (prefers-color-scheme: dark) { :root { --fg: #e6e6e3; --bg: #16161a; --mute: #9a9a9a; --line: #2e2e33; --accent: #63a4ff; --ok: #48bb78; --bad: #f56565; --con: #0b0b0d; --confg: #cfcfcf; } }
-  * { box-sizing: border-box; }
-  body { margin: 0; font: 14px/1.45 system-ui, sans-serif; color: var(--fg); background: var(--bg); display: flex; flex-direction: column; height: 100vh; }
-  header { display: flex; flex-wrap: wrap; gap: .6rem 1rem; align-items: end; padding: .8rem 1rem; border-bottom: 1px solid var(--line); }
-  header h1 { font-size: 1rem; margin: 0 1rem 0 0; align-self: center; }
-  label { display: flex; flex-direction: column; font-size: .75rem; color: var(--mute); gap: .15rem; }
-  .settings { font-size: .8rem; color: var(--mute); align-self: center; }
-  input, select, button { font: inherit; padding: .3rem .5rem; border: 1px solid var(--line); border-radius: 4px; background: transparent; color: var(--fg); }
-  input[type=number] { width: 5rem; } input[type=text] { width: 9rem; }
-  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); cursor: pointer; }
-  button:disabled { opacity: .5; cursor: default; }
-  #status { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--mute); }
-  #status.ok { color: var(--ok); } #status.bad { color: var(--bad); }
-  main { flex: 1; display: grid; grid-template-rows: 1fr auto; min-height: 0; }
-  #panes { display: grid; grid-template-columns: 3fr 2fr; min-height: 0; }
-  @media (max-width: 900px) { #panes { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; } }
-  .pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-left: 1px solid var(--line); }
-  .pane:first-child { border-left: 0; }
-  .pane h2 { margin: 0; padding: .3rem 1rem; font-size: .75rem; font-weight: 600; color: var(--mute); text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
-  .pane h2 span { display: flex; gap: .4rem; }
-  .pane h2 button { font-size: .7rem; padding: .1rem .5rem; text-transform: none; letter-spacing: 0; font-weight: 400; cursor: pointer; }
-  .pane h2 button:disabled { cursor: default; }
-  footer:empty, footer:has(#warn:empty) { display: none; }
-  .pane pre { flex: 1; margin: 0; padding: .75rem 1rem; overflow: auto; background: var(--con); color: var(--confg); font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
-  footer { display: flex; gap: 1rem; padding: .5rem 1rem; border-top: 1px solid var(--line); font-size: .8rem; color: var(--mute); align-items: center; }
-  footer a { color: var(--accent); } footer a[hidden] { display: none; }
-  #warn { color: var(--bad); }
+  :root { color-scheme: light dark; }
+  body { margin: 0 auto; padding: 0 1rem 3rem; max-width: 60rem; font: 15px/1.5 system-ui, sans-serif; }
+  h1 { font-size: 1.6rem; margin: 1.2rem 0 .2rem; }
+  h1 small { font-weight: normal; font-size: 1rem; color: GrayText; margin-left: .5rem; }
+  h2 { font-size: 1.15rem; margin: 2rem 0 .5rem; border-bottom: 1px solid GrayText; padding-bottom: .2rem; }
+  p, li { max-width: 46rem; }
+  .authors { color: GrayText; margin: 0 0 .3rem; }
+  nav a { margin-right: 1rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .92rem; }
+  th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid color-mix(in srgb, GrayText 40%, transparent); vertical-align: top; }
+  th { font-weight: 600; }
+  td.act { white-space: nowrap; }
+  tr.selected td { background: color-mix(in srgb, Highlight 12%, transparent); }
+  button { font: inherit; font-size: .88rem; padding: .1rem .55rem; cursor: pointer; }
+  button:disabled { cursor: default; opacity: .6; }
+  #runbox { margin-top: 1rem; }
+  #runhead { display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap; }
+  #runhead b { font-size: 1rem; }
+  #status { color: GrayText; font-variant-numeric: tabular-nums; }
+  #status.ok { color: green; } #status.bad { color: crimson; }
+  #panes { display: grid; grid-template-columns: 3fr 2fr; gap: .8rem; margin-top: .6rem; }
+  @media (max-width: 800px) { #panes { grid-template-columns: 1fr; } }
+  .pane h3 { font-size: .8rem; font-weight: 600; margin: 0 0 .25rem; display: flex; justify-content: space-between; align-items: center; }
+  .pane h3 span button { margin-left: .3rem; }
+  .pane pre { margin: 0; height: 24rem; overflow: auto; padding: .5rem .7rem; border: 1px solid GrayText; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+  #plot { max-width: 100%; margin-top: .8rem; display: block; }
+  figure { margin: 1.2rem 0; }
+  figure img { max-width: 100%; }
+  figcaption { font-size: .9rem; color: GrayText; }
+  #warn { color: crimson; }
 </style>
 </head>
 <body>
-<header>
-  <h1>kSTEP</h1>
-  <label>bug <select id="kernel"></select></label>
-  <span id="settings" class="settings"></span>
-  <button id="run" class="primary">Run</button>
-  <span id="status">idle</span>
-</header>
-<main>
+<h1>kSTEP <small>Kernel Scheduler Test and Evaluation Platform</small></h1>
+<p class="authors">Tingjia Cao, Shawn (Wanxiang) Zhong, Caeden Whitaker, Ke Han, Andrea C. Arpaci-Dusseau, Remzi H. Arpaci-Dusseau. OSDI '26.</p>
+<nav>
+  <a href="https://kstep-dev.github.io/assets/paper-osdi26.pdf">Paper (PDF)</a>
+  <a href="https://github.com/kstep-dev/kstep">Code</a>
+  <a href="https://github.com/kstep-dev/study">Bug study</a>
+  <a href="https://github.com/kstep-dev/results">Results</a>
+</nav>
+
+<h2>Reproduce a scheduler bug in your browser</h2>
+<p>Each row is a real Linux CPU scheduler bug with a kSTEP driver that triggers it.
+<b>buggy</b> boots the kernel just before the fix, <b>fixed</b> the kernel with the fix, both inside
+QEMU compiled to WebAssembly, and streams the kernel console and the driver's trace below.
+The same driver and trace format produce the plots in the paper. A run takes about ten seconds.</p>
+<p id="warn"></p>
+<table id="bugs">
+  <thead><tr><th>Bug</th><th>Driver</th><th>Fix</th><th>vCPUs</th><th>Run</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<div id="runbox" hidden>
+  <div id="runhead"><b id="runtitle"></b><span id="status">idle</span><button id="again" hidden>Run again</button></div>
   <div id="panes">
-    <div class="pane"><h2>kernel console <span><button data-copy="console">copy</button><button data-save="console">download</button></span></h2><pre id="console"></pre></div>
-    <div class="pane"><h2>driver output <span><button data-copy="jsonl">copy</button><button data-save="jsonl">download</button></span></h2><pre id="jsonl"></pre></div>
+    <div class="pane"><h3>kernel console <span><button data-copy="console">copy</button><button data-save="console">download</button></span></h3><pre id="console"></pre></div>
+    <div class="pane"><h3>driver output <span><button data-copy="jsonl">copy</button><button data-save="jsonl">download</button></span></h3><pre id="jsonl"></pre></div>
   </div>
-  <footer><span id="warn"></span></footer>
-</main>
+  <img id="plot" hidden alt="buggy vs fixed trace plot from the paper's results">
+</div>
+
+<h2>Paper</h2>
+<p><a href="https://kstep-dev.github.io/assets/paper-osdi26.pdf">kSTEP: Characterization and Deterministic Testing of Linux CPU Scheduler Bugs</a>, OSDI '26.</p>
+<p>We present an in-depth study of CPU scheduler bugs, covering both functional violations and
+misalignments between implementation and policy. Our study shows that these bugs are hard to
+observe and even harder to trigger. To close this gap, we introduce kSTEP. kSTEP gives testers
+fine-grained control over scheduler-invoking events and runs them deterministically on isolated
+CPUs. kSTEP produces noise-free, repeatable traces that expose subtle behavior. We then build a
+coverage-guided fuzzer on top of kSTEP for automated CPU scheduler testing. We demonstrate
+kSTEP's effectiveness by reproducing seven real-world scheduler bugs and uncovering four new ones.</p>
+<figure><img src="figures/arch.svg" alt="kSTEP architecture"><figcaption>kSTEP architecture: a driver program declares a sequence of scheduler-invoking events; the kernel module dispatches them on isolated CPUs with mocked time, so the unmodified scheduler produces a repeatable trace.</figcaption></figure>
+
+<h2>Resources</h2>
+<ul>
+  <li><a href="https://github.com/kstep-dev/kstep">kstep</a>: framework, drivers, fuzzer, and automation scripts.</li>
+  <li><a href="https://github.com/kstep-dev/study">study</a>: the bug study dataset and analysis.</li>
+  <li><a href="https://github.com/kstep-dev/results">results</a>: buggy and fixed traces and plots for every reproduced bug.</li>
+  <li><a href="https://github.com/kstep-dev/web">web</a>: this page and the WebAssembly build of QEMU behind it.</li>
+</ul>
+
 <!-- GitHub Pages cannot set COOP/COEP headers; this service worker adds them on reload. -->
 <script src="coi-serviceworker.min.js"></script>
 <script type="module">
 const $ = (id) => document.getElementById(id);
-const con = $('console'), out = $('jsonl'), status = $('status'), warn = $('warn');
-
-// The one hard requirement: SharedArrayBuffer, which needs COOP/COEP headers. The
-// service worker above adds them and reloads once. (No Memory64 needed: the QEMU
-// binary is lowered to wasm32 via --enable-wasm64-32bit-address-limit.)
+const warn = $('warn'), status = $('status'), con = $('console'), out = $('jsonl');
 if (typeof SharedArrayBuffer === 'undefined')
   warn.textContent = 'SharedArrayBuffer unavailable; reload once so the service worker can add the COOP/COEP headers.';
 
-// kernels.json (generated by deploy.sh): {version, base, kernels:[{name, driver, num_cpus, mem_mb}]}.
+// data.json (generated by deploy.sh): {version, base, bugs:[{name, title, num_cpus, mem_mb, images:{buggy,fixed}, driver_url, fixes, plot}]}.
 // Images are fetched from `base`, the kstep-dev/build repo on GitHub at the commit kSTEP pins.
-// `version` is appended to the wasm/js/bios URLs so a new deploy is never served from cache.
-// Reproduce mode: driver, vCPUs and RAM are the values reproduce.py uses for the bug.
-let V = '', base = '', kernels = [];
-try {
-  ({ version: V, base, kernels } = await (await fetch('kernels.json', { cache: 'no-store' })).json());
-  $('kernel').replaceChildren(...kernels.map(k => new Option(k.name, k.name)));
-  if (!kernels.length) warn.textContent = 'No kernels listed in kernels.json.';
-} catch (e) { warn.textContent = 'kernels.json failed: ' + e.message; }
+let V = '', base = '', bugs = [];
+try { ({ version: V, base, bugs } = await (await fetch('data.json', { cache: 'no-store' })).json()); }
+catch (e) { warn.textContent = 'data.json failed: ' + e.message; }
 const { BIOS, runKstep } = await import(`./kstep.mjs?v=${V}`);
-const selected = () => kernels.find(k => k.name === $('kernel').value);
-const showSettings = () => { const k = selected(); $('settings').textContent = k ? `driver ${k.driver} · ${k.num_cpus} vCPUs · ${k.mem_mb} MB` : ''; };
-$('kernel').onchange = showSettings;
-// Restore the last run's bug from the URL (written on Run) so a reload keeps it and the URL is shareable.
-const q = new URLSearchParams(location.search);
-if (kernels.some(k => k.name === q.get('kernel'))) $('kernel').value = q.get('kernel');
-showSettings();
+
+const link = (text, href) => { const a = document.createElement('a'); a.textContent = text; a.href = href; return a; };
+const tbody = $('bugs').querySelector('tbody');
+for (const b of bugs) {
+  const tr = tbody.insertRow(); tr.dataset.bug = b.name;
+  tr.insertCell().textContent = b.title;
+  const d = tr.insertCell(); if (b.driver_url) d.append(link(b.name + '.c', b.driver_url));
+  const f = tr.insertCell(); b.fixes.forEach((x, i) => { if (i) f.append(', '); f.append(link(x.label, x.url)); });
+  tr.insertCell().textContent = b.num_cpus;
+  const act = tr.insertCell(); act.className = 'act';
+  for (const v of ['buggy', 'fixed']) {
+    if (!b.images[v]) continue;
+    const btn = document.createElement('button'); btn.textContent = v; btn.onclick = () => run(b, v); act.append(btn);
+    if (v === 'buggy') act.append(' ');
+  }
+}
 
 // Copy / download act on the pane's current text.
 const files = { console: 'qemu.log', jsonl: 'kstep.jsonl' };
@@ -88,22 +124,22 @@ document.querySelectorAll('.pane button').forEach(b => {
   b.disabled = true;
   b.onclick = () => {
     const text = $(id).textContent;
-    if (b.dataset.copy) {
-      navigator.clipboard.writeText(text).then(() => { b.textContent = 'copied'; setTimeout(() => b.textContent = 'copy', 1200); });
-    } else {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' })); a.download = files[id]; a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    }
+    if (b.dataset.copy) navigator.clipboard.writeText(text).then(() => { b.textContent = 'copied'; setTimeout(() => b.textContent = 'copy', 1200); });
+    else { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' })); a.download = files[id]; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); }
   };
 });
 const enableActions = (on) => document.querySelectorAll('.pane button').forEach(b => b.disabled = !on);
 
-$('run').onclick = async () => {
-  const k = selected(); if (!k) return;
-  $('run').disabled = true; enableActions(false);
-  con.textContent = ''; out.textContent = '';
-  history.replaceState(null, '', '?' + new URLSearchParams({ kernel: k.name }));
+let started = false;
+async function run(b, variant) {
+  if (started) return;  // QEMU does not exit cleanly under Emscripten; a second run reloads the page.
+  started = true;
+  history.replaceState(null, '', '?' + new URLSearchParams({ bug: b.name, kernel: variant }));
+  document.querySelectorAll('#bugs button').forEach(x => x.disabled = true);
+  tbody.querySelectorAll('tr').forEach(tr => tr.classList.toggle('selected', tr.dataset.bug === b.name));
+  $('runbox').hidden = false; $('runtitle').textContent = `${b.title}, ${variant} kernel (${b.name}, ${b.num_cpus} vCPUs, ${b.mem_mb} MB)`;
+  if (b.plot) { $('plot').src = b.plot; $('plot').hidden = false; }
+  $('runbox').scrollIntoView({ behavior: 'smooth', block: 'start' });
   const t0 = performance.now();
   const setStatus = (s, cls = '') => { status.textContent = `${((performance.now() - t0) / 1000).toFixed(1)}s  ${s}`; status.className = cls; };
   // Lines are appended to the panes in 50 ms batches; each pane follows its tail unless scrolled up.
@@ -120,15 +156,16 @@ $('run').onclick = async () => {
   };
   try {
     setStatus('fetching images');
+    const image = b.images[variant];
     const get = (u) => fetch(u).then(r => { if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`); return r.arrayBuffer(); });
     const [kernel, rootfs, { default: Module }, ...bios] = await Promise.all([
-      get(`${base}/${k.name}/kernel`), get(`${base}/${k.name}/rootfs.cpio`),
+      get(`${base}/${image}/kernel`), get(`${base}/${image}/rootfs.cpio`),
       import(`./qemu/qemu-system-x86_64.js?v=${V}`), ...BIOS.map(f => get(`qemu/${f}?v=${V}`)),
     ]);
     setStatus('starting qemu');
     const { done } = await runKstep(Module, {
       files: { kernel, rootfs, bios: Object.fromEntries(BIOS.map((f, i) => [f, bios[i]])) },
-      driver: k.driver, smp: k.num_cpus, mem: k.mem_mb,
+      driver: b.name, smp: b.num_cpus, mem: b.mem_mb,
       locateFile: (f) => `qemu/${f}?v=${V}`,
       onLine: (ch, line) => { panes[ch].pending += line + '\n'; if (!timer) timer = setTimeout(flush, 50); if (ch === 'console') setStatus('running'); },
     });
@@ -138,11 +175,13 @@ $('run').onclick = async () => {
   } catch (e) {
     setStatus('error: ' + e.message, 'bad'); console.error(e);
   }
-  // The QEMU instance does not exit cleanly under Emscripten, so a new run reloads the
-  // page; the selected bug survives via the URL.
-  $('run').textContent = 'Run again';
-  $('run').disabled = false; $('run').onclick = () => location.reload();
-};
+  $('again').hidden = false; $('again').onclick = () => location.reload();
+}
+
+// A URL from a previous run (or shared) starts that run again.
+const q = new URLSearchParams(location.search);
+const b0 = bugs.find(b => b.name === q.get('bug'));
+if (b0 && b0.images[q.get('kernel')]) run(b0, q.get('kernel'));
 </script>
 </body>
 </html>
