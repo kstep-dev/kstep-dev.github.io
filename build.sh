@@ -89,12 +89,16 @@ qemu() {
   if [ ! -d "$src" ]; then
     git init -q "$src" && git -C "$src" fetch -q --depth 1 "$QEMU_REPO" "$QEMU_COMMIT" && git -C "$src" checkout -q FETCH_HEAD
   fi
+  # The wasm heap size is fixed at link time by QEMU's configs/meson/emscripten.txt (2 GB
+  # upstream). 1 GB is plenty: a run touches ~0.6 GB, and smaller reservations work on more
+  # browsers (phones, Safari).
+  sed -i 's/-sTOTAL_MEMORY=2GB/-sTOTAL_MEMORY=1GB/' "$src/configs/meson/emscripten.txt"
   mkdir -p "$src/build" && cd "$src/build"
   emconfigure ../configure --static --cpu=wasm64 --enable-wasm64-32bit-address-limit --cross-prefix= \
     --target-list=x86_64-softmmu \
     --enable-system --disable-user --disable-tools --disable-docs \
     --without-default-features --with-coroutine=wasm \
-    --extra-cflags="-O3 -g0 -matomics -mbulk-memory -DNDEBUG -sASYNCIFY=1 -pthread -sPROXY_TO_PTHREAD=1 -sFORCE_FILESYSTEM -sTOTAL_MEMORY=2300MB -sWASM_BIGINT -sMALLOC=mimalloc"
+    --extra-cflags="-O3 -g0 -matomics -mbulk-memory -DNDEBUG -sASYNCIFY=1 -pthread -sPROXY_TO_PTHREAD=1 -sFORCE_FILESYSTEM -sWASM_BIGINT -sMALLOC=mimalloc"
   emmake make -j"$(nproc)"
   mkdir -p "$W/site/qemu"
   cp qemu-system-x86_64.js qemu-system-x86_64.wasm ../pc-bios/bios-256k.bin ../pc-bios/linuxboot_dma.bin ../pc-bios/kvmvapic.bin "$W/site/qemu/"

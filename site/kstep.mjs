@@ -26,7 +26,7 @@ export function bootArgs({ driver, smp }) {
 export function qemuArgs({ driver, smp, mem }) {
   return [
     '-smp', String(smp), '-cpu', 'max', '-m', `${mem}M`, '-L', '/bios',
-    '-accel', 'tcg,tb-size=500,thread=multi',
+    '-accel', 'tcg,tb-size=64,thread=multi',
     '-kernel', '/kernel', '-initrd', '/rootfs.cpio', '-append', bootArgs({ driver, smp }),
     '-nographic', '-nodefaults', '-no-reboot',
     // /dev/kstep0..2 are Emscripten device nodes whose write callbacks push bytes to us.

@@ -41,8 +41,11 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
   so the service worker adds them and reloads the page once on first visit.
 * **wasm32.** QEMU is built with `--enable-wasm64-32bit-address-limit` (64-bit
   pointers in C, wasm32 output) so it also runs where Memory64 is missing
-  (Safari, older Chrome and Firefox). The heap is 2 GB, guest RAM at most 1 GB;
-  `long_balance` (4 GB) is therefore left out of the page.
+  (Safari, older Chrome and Firefox).
+* **Memory.** The wasm heap is 1 GB (`build.sh` patches QEMU's emscripten
+  config, which says 2 GB) and the translation cache 64 MB; guests get the 128 MB
+  `reproduce.py` specifies (kSTEP touches ~20 MB). A run peaks around 0.6 GB of
+  process memory. `long_balance` (4 GB guest) is left out of the page.
 * **Output.** The three serial chardevs write to Emscripten device nodes whose
   JavaScript callbacks receive each byte as QEMU emits it: no polling. QEMU never
   exits under Emscripten, so the reboot line on the console marks completion, and

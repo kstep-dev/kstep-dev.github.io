@@ -8,7 +8,7 @@
 // docs/website submodule, else ../kstep) and the QEMU build from site/qemu/. Console -> stdout,
 // status -> stderr, results -> --out (default results/<kernel>-<driver>/).
 // --driver defaults to the kernel name minus _buggy/_fixed; --smp/--mem to reproduce.py's
-// values when site/data.json exists, else 2 / 512.
+// values when site/data.json exists, else 2 / 128.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +17,7 @@ import { BIOS, runKstep } from './site/kstep.mjs';
 const W = path.dirname(fileURLToPath(import.meta.url));
 const args = Object.fromEntries(process.argv.slice(2).map((a, i, all) => a.startsWith('--') ? [a.slice(2), all[i + 1] ?? ''] : []).filter(x => x.length));
 const kernel = args.kernel ?? 'sync_wakeup_buggy';
-let defaults = { driver: kernel.replace(/_(buggy|fixed)$/, ''), num_cpus: 2, mem_mb: 512 };
+let defaults = { driver: kernel.replace(/_(buggy|fixed)$/, ''), num_cpus: 2, mem_mb: 128 };
 try {  // defaults from site/data.json (deploy.sh), i.e. reproduce.py's values for the bug
   const b = JSON.parse(fs.readFileSync(path.join(W, 'site', 'data.json'))).bugs.find(b => Object.values(b.images).includes(kernel));
   if (b) defaults = { driver: b.name, num_cpus: b.num_cpus, mem_mb: b.mem_mb };
