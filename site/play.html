@@ -10,13 +10,37 @@
   header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; flex-wrap: wrap; }
   h1 { font-size: 1.6rem; margin: 1.2rem 0 .2rem; }
   nav a { margin-left: 1rem; }
+  nav { display: flex; align-items: baseline; }
   h2 { font-size: 1rem; margin: 1.4rem 0 .4rem; border-bottom: 1px solid GrayText; padding-bottom: .15rem; display: flex; justify-content: space-between; align-items: baseline; }
-  h2 span { font-weight: normal; font-size: .85rem; color: GrayText; }
-  #toolbar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .8rem 0; }
-  button, input, select { font: inherit; padding: .2rem .6rem; }
-  button:disabled { opacity: .5; }
-  #cmd { flex: 1; min-width: 12rem; font-family: ui-monospace, monospace; }
-  #status { color: GrayText; font-variant-numeric: tabular-nums; }
+  h2 span { font-weight: normal; font-size: .85rem; color: GrayText; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+  h2 label { display: flex; gap: .35rem; align-items: center; }
+  button, input, select { font: inherit; font-size: .92rem; padding: .25rem .7rem; border: 1px solid color-mix(in srgb, GrayText 55%, transparent); border-radius: .3rem; background: Canvas; color: CanvasText; }
+  button { cursor: pointer; }
+  button:hover:not(:disabled) { background: color-mix(in srgb, GrayText 12%, Canvas); }
+  button:disabled { cursor: default; opacity: .5; }
+  button.primary { background: AccentColor; color: AccentColorText; border-color: transparent; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.1); }
+  td input { padding: 0 .2rem; font-size: .85rem; }
+  td input.bad { border-color: crimson; color: crimson; }
+  td button { padding: 0 .5rem; font-size: .8rem; }
+  td select { padding: 0 .2rem; font-size: .85rem; }
+  #status { color: GrayText; font-size: .9rem; font-variant-numeric: tabular-nums; }
+  #cpu-hint { margin: 0; }
+  #cpu-hint:empty { display: none; }
+  #cpu-hint.bad { color: crimson; }
+  #machine { display: flex; gap: .6rem; flex-wrap: wrap; margin: .4rem 0; }
+  .socket { border: 1px solid GrayText; border-radius: .35rem; padding: .35rem .45rem; }
+  .socket > header { font-size: .8rem; color: GrayText; margin-bottom: .3rem; }
+  .clusters { display: flex; gap: .5rem; }
+  .cluster { border: 1px dashed GrayText; border-radius: .3rem; padding: .3rem .4rem; }
+  .cluster header { display: flex; gap: .5rem; align-items: center; justify-content: space-between; font-size: .8rem; color: GrayText; margin-bottom: .3rem; }
+  .cores { display: flex; gap: .35rem; }
+  .core { border: 1px dotted GrayText; border-radius: .2rem; padding: 2px 3px; }
+  .core header { display: flex; gap: .3rem; align-items: center; justify-content: space-between; font-size: .7rem; color: GrayText; margin-bottom: 2px; }
+  .core select { padding: 0 .1rem; font-size: .7rem; }
+  .threads { display: flex; gap: 2px; }
+  .core span { display: inline-block; padding: .1rem .35rem; font-size: .75rem; font-variant-numeric: tabular-nums; background: color-mix(in srgb, GrayText 15%, transparent); border-radius: .15rem; }
+  #clock { display: flex; gap: .5rem; align-items: center; }
   #status.bad { color: crimson; }
   #timeline { display: block; width: 100%; border: 1px solid GrayText; border-bottom: 0; }
   #scroll { overflow-x: auto; overflow-y: hidden; height: 18px; border: 1px solid GrayText; border-top: 0; }
@@ -26,45 +50,41 @@
   th:first-child, td:first-child { text-align: left; }
   pre { margin: 0; height: 12rem; overflow: auto; padding: .5rem .7rem; border: 1px solid GrayText; font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
   pre .err { color: crimson; }
-  details pre { height: 14rem; white-space: pre; }
+  details { margin-top: 1.2rem; }
+  details summary { cursor: pointer; font-weight: 600; font-size: 1rem; }
+  details summary .hint { font-weight: normal; font-size: .85rem; }
+  details pre { margin-top: .4rem; height: 14rem; }
+  #console { white-space: pre; }
   .hint { color: GrayText; }
 </style>
 </head>
 <body>
 <header>
   <h1>kSTEP playground</h1>
-  <nav><a href="./">Reproduce</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
+  <nav><span id="status">loading</span><a href="./">Reproduce</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
 </header>
-<p>A Linux kernel runs below, with kSTEP holding its scheduler clock. Nothing happens until you say so:
-<code>create</code> adds a runnable task (on any CPU, or <code>create 2</code> for CPU 2 only), <code>pin</code> moves one, <code>kill</code> ends one, <code>tick</code> advances the scheduler by exactly one tick.
-The timeline shows, per CPU, which task ran after each tick; the table lists the live tasks with their scheduler counters.</p>
+<p>A Linux kernel boots below when the page loads, with kSTEP holding its scheduler clock. Nothing happens in it except what you ask for: create tasks, change their nice value or affinity, pause or kill them, pick the machine's topology, and advance the scheduler one tick at a time.</p>
 
-<div id="toolbar">
-  <button id="boot">Boot</button>
-  <label class="hint">with <input id="ntasks" type="number" min="0" max="16" value="3" style="width:3.5rem"> tasks on
-    <select id="ncpus"><option>1</option><option>2</option><option>3</option><option>4</option></select> CPUs</label>
-  <button class="verb" data-cmd="create" disabled>create</button>
-  <button class="verb" data-ticks="1" disabled>tick</button>
-  <button id="auto" class="verb" disabled>auto tick</button>
-  <select id="rate" class="verb" disabled title="ticks per second while auto ticking">
-    <option value="1">1/s</option><option value="2">2/s</option><option value="5" selected>5/s</option>
-    <option value="10">10/s</option><option value="20">20/s</option><option value="0">max</option>
-  </select>
-  <input id="cmd" placeholder="or type a command (create [cpu], pin <pid> <cpu> [cpu2], tick, curr, task [pid], kill <pid>) and press Enter" disabled>
-  <span id="status">not booted</span>
-</div>
-<p class="hint" id="hint">Space ticks once; auto tick keeps ticking at the chosen rate until paused, and other commands still work in between. Tasks are labelled t0, t1, … in creation order; the kernel knows them by pid.</p>
 
-<h2>Timeline <span>one column per tick; a band per CPU, a row per task that ran there; scroll sideways for history</span></h2>
+<h2>Topology <span>
+  <label><input id="sockets" type="number" min="1" max="8" value="1" style="width:3rem"> sockets ×</label>
+  <label><input id="clusters" type="number" min="1" max="8" value="1" style="width:3rem"> clusters ×</label>
+  <label><input id="cores" type="number" min="1" max="8" value="2" style="width:3rem"> cores ×</label>
+  <label><input id="threads" type="number" min="1" max="4" value="2" style="width:3rem"> threads</label>
+  <span id="ncpus-label"></span>
+  <button id="boot" title="reboot the VM with this machine (reloads the page)">Restart</button></span></h2>
+<div id="machine"></div>
+<p class="hint" id="cpu-hint"></p>
+
+<h2>Timeline <span><span id="clock" hidden><label><input id="speed" type="number" min="0" max="1000" step="10" value="20" style="width:4.2rem" title="ticks per second; 0 stops the clock"> ticks/s</label>
+  <button id="step" title="stop the clock and advance exactly one tick">step</button></span></h2>
 <canvas id="timeline"></canvas>
 <div id="scroll"><div id="spacer"></div></div>
 
-<h2>Tasks <span>from <code>task</code> after every command</span></h2>
-<table id="tasks"><thead><tr><th></th><th>task</th><th>pid</th><th>state</th><th>on</th><th>nice</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th><th></th></tr></thead><tbody></tbody></table>
+<h2>Tasks <span><button id="create" hidden>create task</button></span></h2>
+<table id="tasks"><thead><tr><th></th><th>task</th><th>state</th><th>cpu</th><th>nice</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th><th>affinity</th><th></th></tr></thead><tbody></tbody></table>
 
-<h2>Transcript <span><button id="copy">copy</button></span></h2>
-<pre id="log"></pre>
-
+<details><summary>kSTEP commands</summary><pre id="log"></pre></details>
 <details><summary>Kernel console</summary><pre id="console"></pre></details>
 
 <script src="coi-serviceworker.min.js"></script>
@@ -79,25 +99,34 @@ catch (e) { setStatus('data.json failed: ' + e.message, true); }
 const { BIOS, runKstep } = await import(`./kstep.mjs?v=${V}`);
 
 // ---- session state ----
-let busy = false;
-const tasks = [];            // [{pid, label, stat}] in creation order
+const tasks = [];            // [{pid, label, stat, alive}] in creation order
 const timeline = [];         // per tick: [pid on CPU 1, pid on CPU 2, ...] (0 = idle)
 let ncpus = 1;
-// Colours are fixed per creation order, so a task keeps its colour in the timeline after it exits.
 const labelOf = (pid) => tasks.find(t => t.pid === pid)?.label ?? String(pid);
+// Colours are fixed per creation order, so a task keeps its colour in the timeline after it exits.
 const colorOf = (pid) => { const i = tasks.findIndex(t => t.pid === pid); return i < 0 ? 'gray' : `hsl(${(i * 67) % 360} 60% 50%)`; };
 
-// Fixed-width columns; when the run is longer than the canvas, the view follows the latest
-// ticks (a horizontal scrollbar under the canvas lets you look back). Column width does not
-// shrink, so a slice always looks like a slice.
-const CELL = 8, LABEL_W = 48;
+// ---- machine: sockets x clusters x cores x threads over CPUs 1..N (CPU 0 stays kSTEP's own) ----
+// kSTEP's spec is LEVEL=group|group;... with every online CPU in exactly one group per level.
+// Threads of a core form an SMT group, cores of a cluster a CLS group, and a socket is both
+// the MC (shared last-level cache) and the PKG group; capacity is per core (its threads match).
+const MAX_CPUS = 8;
+const DIMS = ['sockets', 'clusters', 'cores', 'threads'];
+let machine = { sockets: 1, clusters: 1, cores: 2, threads: 2, caps: [] };   // what the VM booted with
+const nCpus = (m) => m.sockets * m.clusters * m.cores * m.threads;
+const socketOf = (m, cpu) => Math.floor((cpu - 1) / (m.clusters * m.cores * m.threads));
+const clusterOf = (m, cpu) => Math.floor((cpu - 1) / (m.cores * m.threads));
+const coreOf = (m, cpu) => Math.floor((cpu - 1) / m.threads);
+const groupSpec = (m, id) => { const g = []; for (let c = 1; c <= nCpus(m); c++) (g[id(m, c)] ??= []).push(c); return ['0', ...g.map(l => l.join(','))].join('|'); };
+const topoSpec = (m) => `SMT=${groupSpec(m, coreOf)};CLS=${groupSpec(m, clusterOf)};MC=${groupSpec(m, socketOf)};PKG=${groupSpec(m, socketOf)}`;
+
+// ---- timeline: fixed-width columns, a band per CPU, a row per task that has run there ----
+const CELL = 8, LABEL_W = 48, ROW = 16, BAND_GAP = 6;
 const scroller = $('scroll');
 let follow = true;
 scroller.onscroll = () => { follow = scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 2; };
-const ROW = 16, BAND_GAP = 6;
 function draw() {
-  // rows[cpu] = pids in order of first appearance on that CPU
-  const rows = Array.from({ length: ncpus }, () => []);
+  const rows = Array.from({ length: ncpus }, () => []);   // rows[cpu] = pids in order of first appearance
   for (const t of timeline) t.forEach((pid, cpu) => { if (pid && !rows[cpu].includes(pid)) rows[cpu].push(pid); });
   const bandH = (cpu) => Math.max(1, rows[cpu].length) * ROW + BAND_GAP;
   const H = rows.reduce((a, _, cpu) => a + bandH(cpu), 0) + 16;
@@ -109,110 +138,202 @@ function draw() {
   $('spacer').style.width = `${Math.max(timeline.length * CELL + LABEL_W, W)}px`;
   if (follow) scroller.scrollLeft = scroller.scrollWidth;
   const first = Math.max(0, Math.min(Math.round(scroller.scrollLeft / CELL), timeline.length - visible));
+  const last = Math.min(timeline.length, first + visible);
   const fg = getComputedStyle(document.body).color;
   ctx.textBaseline = 'middle';
   let y = 2;
   for (let cpu = 0; cpu < ncpus; cpu++) {
-    // band label and the band's idle stretches (no task current on this CPU at that tick)
     ctx.font = 'bold 11px system-ui'; ctx.fillStyle = fg; ctx.globalAlpha = 0.8; ctx.fillText(`cpu${cpu + 1}`, 2, y + ROW / 2); ctx.globalAlpha = 1;
-    ctx.fillStyle = 'color-mix(in srgb, GrayText 20%, transparent)';
-    for (let c = first; c < Math.min(timeline.length, first + visible); c++)
-      if (!timeline[c][cpu]) ctx.fillRect(LABEL_W + (c - first) * CELL, y, CELL - 1, bandH(cpu) - BAND_GAP);
-    // one row per task that ran here
+    ctx.fillStyle = 'color-mix(in srgb, GrayText 20%, transparent)';          // idle stretches
+    for (let c = first; c < last; c++) if (!timeline[c][cpu]) ctx.fillRect(LABEL_W + (c - first) * CELL, y, CELL - 1, bandH(cpu) - BAND_GAP);
     ctx.font = '11px system-ui';
     rows[cpu].forEach((pid, r) => {
-      const ry = y + r * ROW;
-      ctx.fillStyle = fg; ctx.globalAlpha = 0.7; ctx.fillText(labelOf(pid), LABEL_W - 4 - ctx.measureText(labelOf(pid)).width, ry + ROW / 2); ctx.globalAlpha = 1;
+      const ry = y + r * ROW, label = labelOf(pid);
+      ctx.fillStyle = fg; ctx.globalAlpha = 0.7; ctx.fillText(label, LABEL_W - 4 - ctx.measureText(label).width, ry + ROW / 2); ctx.globalAlpha = 1;
       ctx.fillStyle = colorOf(pid);
-      for (let c = first; c < Math.min(timeline.length, first + visible); c++)
-        if (timeline[c][cpu] === pid) ctx.fillRect(LABEL_W + (c - first) * CELL, ry + 1, CELL - 1, ROW - 2);
+      for (let c = first; c < last; c++) if (timeline[c][cpu] === pid) ctx.fillRect(LABEL_W + (c - first) * CELL, ry + 1, CELL - 1, ROW - 2);
     });
     y += bandH(cpu);
-    if (cpu < ncpus - 1) { ctx.strokeStyle = fg; ctx.globalAlpha = 0.25; ctx.beginPath(); ctx.moveTo(0, y - BAND_GAP / 2); ctx.lineTo(W, y - BAND_GAP / 2); ctx.stroke(); ctx.globalAlpha = 1; }
+    if (cpu < ncpus - 1) {   // separator, heaviest between sockets, then clusters, cores, siblings
+      const diff = (f) => f(machine, cpu + 1) !== f(machine, cpu + 2), w = diff(socketOf) ? 3 : diff(clusterOf) ? 2 : diff(coreOf) ? 1 : 0;
+      ctx.strokeStyle = fg; ctx.globalAlpha = [0.15, 0.4, 0.7, 0.9][w]; ctx.lineWidth = [1, 1, 2, 3][w];
+      ctx.beginPath(); ctx.moveTo(0, y - BAND_GAP / 2); ctx.lineTo(W, y - BAND_GAP / 2); ctx.stroke(); ctx.globalAlpha = 1; ctx.lineWidth = 1;
+    }
   }
-  // tick numbers every 10 columns along the bottom edge
-  ctx.fillStyle = fg; ctx.globalAlpha = 0.5; ctx.font = '10px system-ui';
-  for (let c = first - (first % 10); c < first + visible; c += 10)
-    if (c >= first) ctx.fillText(String(c), LABEL_W + (c - first) * CELL, H - 6);
+  ctx.fillStyle = fg; ctx.globalAlpha = 0.5; ctx.font = '10px system-ui';   // tick numbers every 10 columns
+  for (let c = first - (first % 10); c < first + visible; c += 10) if (c >= first) ctx.fillText(String(c), LABEL_W + (c - first) * CELL, H - 6);
   ctx.globalAlpha = 1;
 }
-scroller.addEventListener('scroll', draw);
-// Wheel / trackpad over the canvas scrolls the timeline too (the scrollbar below is thin).
-canvas.addEventListener('wheel', (e) => { e.preventDefault(); scroller.scrollLeft += (e.deltaX || e.deltaY); }, { passive: false });
 addEventListener('resize', draw);
+scroller.addEventListener('scroll', draw);
+canvas.addEventListener('wheel', (e) => { e.preventDefault(); scroller.scrollLeft += (e.deltaX || e.deltaY); }, { passive: false });
 
+// ---- machine form: the four counts and a drawing of the result, with a capacity select per core ----
+const formMachine = () => ({ ...Object.fromEntries(DIMS.map(k => [k, +$(k).value])),
+                             caps: [...$('machine').querySelectorAll('select')].map(s => +s.value) });
+function drawMachine(caps) {
+  const m = formMachine(); m.caps = caps;
+  const box = $('machine'); box.replaceChildren();
+  let cpu = 1, k = 0, ncore = 0;
+  for (let so = 0; so < m.sockets; so++) {
+    const sock = document.createElement('div'); sock.className = 'socket';
+    const sh = document.createElement('header'); sh.textContent = `socket ${so + 1}`; sock.append(sh);
+    const clusters = document.createElement('div'); clusters.className = 'clusters';
+    for (let cl = 0; cl < m.clusters; cl++, k++) {
+      const cluster = document.createElement('div'); cluster.className = 'cluster';
+      const head = document.createElement('header'); head.append(`cluster ${k + 1}`); cluster.append(head);
+      const cores = document.createElement('div'); cores.className = 'cores';
+      for (let i = 0; i < m.cores; i++, ncore++) {
+        const core = document.createElement('div'); core.className = 'core';
+        const ch = document.createElement('header'); ch.append(`core ${ncore + 1}`);
+        const cap = document.createElement('select'); cap.title = 'capacity of this core';
+        cap.append(new Option('1024', 1024), new Option('768', 768), new Option('512', 512), new Option('256', 256));
+        cap.value = caps[ncore] ?? 1024; cap.onchange = checkDirty; ch.append(cap); core.append(ch);
+        const threads = document.createElement('div'); threads.className = 'threads';
+        for (let t = 0; t < m.threads; t++) { const th = document.createElement('span'); th.textContent = `cpu${cpu++}`; threads.append(th); }
+        core.append(threads); cores.append(core);
+      }
+      cluster.append(cores); clusters.append(cluster);
+    }
+    sock.append(clusters); box.append(sock);
+  }
+  const n = nCpus(m), bad = n > MAX_CPUS;
+  $('ncpus-label').textContent = `= ${n} CPU${n > 1 ? 's' : ''}`;
+  $('cpu-hint').textContent = bad ? `at most ${MAX_CPUS} CPUs` : '';
+  $('cpu-hint').className = bad ? 'hint bad' : 'hint';
+  $('boot').disabled = bad;
+  checkDirty();
+}
+// Highlight Restart while the form differs from the machine the VM booted with.
+const capsOf = (m) => Array.from({ length: m.sockets * m.clusters * m.cores }, (_, i) => m.caps[i] ?? 1024).join();
+function checkDirty() {
+  const f = formMachine(), dirty = DIMS.some(k => f[k] !== machine[k]) || capsOf(f) !== capsOf(machine);
+  $('boot').classList.toggle('primary', dirty);
+  $('boot').title = dirty ? 'the form differs from the running VM: reboot with this machine (reloads the page)' : 'reboot the VM with this machine (reloads the page)';
+}
+// The machine reaches the kernel as kSTEP's topology=/capacity= boot parameters.
+function cpuParams(m) {
+  const caps = [];
+  for (let c = 1; c <= nCpus(m); c++) { const cap = m.caps[coreOf(m, c)] ?? 1024; if (cap !== 1024) caps.push(`${c}=${cap}`); }
+  return { topology: topoSpec(m), capacity: caps.join(',') };
+}
+
+// ---- task table: rows are created once and updated in place (no rebuild, no flicker) ----
+const rowOf = new Map();
+const NICE = 4, AFF = 10, ACT = 11;   // columns holding controls
+const stateOf = (s) => s.on_cpu ? 'running' : s.state === 0 ? 'runnable' : s.state & 3 ? 'sleeping' : String(s.state);
 function renderTasks() {
-  const tb = $('tasks').querySelector('tbody'); tb.replaceChildren();
+  const tb = $('tasks').querySelector('tbody');
   const ms = (ns) => ns === undefined ? '' : (ns / 1e6).toFixed(1);
   for (const t of tasks) {
-    if (!t.alive) continue;
-    const s = t.stat ?? {}, tr = tb.insertRow();
-    const sw = tr.insertCell(); sw.style.background = colorOf(t.pid); sw.style.width = '.8rem';
-    for (const v of [t.label, t.pid, s.state === 0 ? 'runnable' : s.state, s.on_cpu ? `cpu${s.cpu}` : '', s.nice, s.weight, ms(s.sum_exec_runtime), ms(s.vruntime), ms(s.deadline), ms(s.slice)])
-      tr.insertCell().textContent = v ?? '';
-    const cell = tr.insertCell();
-    const b = document.createElement('button'); b.textContent = 'kill'; b.className = 'verb'; b.disabled = !send || busy;
-    b.onclick = () => run(async () => { await cmd(`kill ${t.pid}`); });
-    cell.append(b);
+    let tr = rowOf.get(t.pid);
+    if (!t.alive) { if (tr) { tr.remove(); rowOf.delete(t.pid); } continue; }
+    if (!tr) {
+      tr = tb.insertRow(); rowOf.set(t.pid, tr);
+      for (let i = 0; i < 12; i++) tr.insertCell();
+      tr.cells[ACT].style.whiteSpace = 'nowrap';
+      tr.cells[0].style.background = colorOf(t.pid); tr.cells[0].style.width = '.8rem';
+      const nice = document.createElement('input'); nice.type = 'number'; nice.min = -20; nice.max = 19; nice.value = 0; nice.style.width = '3.2rem';
+      nice.onchange = () => enqueue(() => cmd(`nice ${t.pid} ${nice.value}`).then(refresh));
+      tr.cells[NICE].append(nice);
+      // affinity as a cpulist ("1-2,4"), passed to the kernel as is; it validates
+      const aff = document.createElement('input'); aff.style.width = '4.5rem'; aff.title = 'CPUs the task may run on, e.g. 1-2,4';
+      aff.onkeydown = (e) => { if (e.key === 'Enter') aff.blur(); };   // Enter or leaving the box applies
+      aff.onchange = () => {
+        enqueue(async () => {
+          const r = await cmd(`affinity ${t.pid} ${aff.value.replace(/\s+/g, '')}`);   // the driver splits on spaces
+          aff.classList.toggle('bad', !r.ok);
+          if (r.ok) await refresh(); else setStatus(`affinity: ${r.error}`, true);
+        });
+      };
+      aff.oninput = () => aff.classList.remove('bad');
+      tr.cells[AFF].append(aff);
+      // pause / wake (label follows the task's state) and kill
+      const pause = document.createElement('button'); pause.textContent = 'pause';
+      pause.onclick = () => enqueue(() => cmd(`${pause.textContent} ${t.pid}`).then(refresh));
+      const kill = document.createElement('button'); kill.textContent = 'kill'; kill.onclick = () => enqueue(() => cmd(`kill ${t.pid}`).then(refresh));
+      tr.cells[ACT].append(pause, ' ', kill);
+    }
+    const s = t.stat ?? {};
+    const nice = tr.cells[NICE].firstElementChild;
+    if (s.nice !== undefined && document.activeElement !== nice) nice.value = s.nice;
+    const aff = tr.cells[AFF].firstElementChild;
+    if (s.cpus !== undefined && document.activeElement !== aff) aff.value = s.cpus;
+    if (s.state !== undefined) tr.cells[ACT].firstElementChild.textContent = stateOf(s) === 'sleeping' ? 'wake' : 'pause';
+    [t.label, s.state === undefined ? '' : stateOf(s), s.cpu, undefined, s.weight, ms(s.sum_exec_runtime), ms(s.vruntime), ms(s.deadline), ms(s.slice)]
+      .forEach((v, i) => { if (v === undefined) return; const text = String(v); if (tr.cells[i + 1].textContent !== text) tr.cells[i + 1].textContent = text; });
   }
 }
 
-// The kernel owns the task list: `task` returns every live task of the session with its
-// counters, in one round trip. Tasks not in the reply have exited.
-async function refresh() {
-  const live = (await cmd('task')).tasks;
-  for (const t of tasks) { const s = live.find(x => x.pid === t.pid); t.alive = !!s; if (s) t.stat = s; }
-  draw(); renderTasks(); setStatus(`tick ${timeline.length}, ${live.length} tasks`);
-}
-
-async function step() {                 // tick, then refresh what the page shows
-  const r = await cmd('tick'); if (!r.ok) return;
-  timeline.push((await cmd('curr')).curr);
-  await refresh();
-}
-async function create(cpu) {
-  const r = await cmd(cpu ? `create ${cpu}` : 'create'); if (!r.ok) return;
-  tasks.push({ pid: r.pid, label: `t${tasks.length}`, alive: true });
-  await refresh();
-}
-
-async function run(fn) {               // serialise UI actions
-  if (busy || !send) return; busy = true;
-  document.querySelectorAll('.verb, #cmd').forEach(e => e.disabled = true);
-  $('auto').disabled = false;   // pause must stay clickable during a step
-  try { await fn(); } catch (e) { setStatus('error: ' + e.message, true); if (auto !== null) $('auto').click(); }
-  document.querySelectorAll('.verb, #cmd').forEach(e => e.disabled = false);
-  busy = false;
-}
-document.querySelectorAll('.verb[data-cmd], .verb[data-ticks]').forEach(b => b.onclick = () => run(async () => {
-  if (b.dataset.cmd === 'create') return create();
-  if (b.dataset.cmd) { await cmd(b.dataset.cmd); return refresh(); }
-  for (let i = 0; i < +b.dataset.ticks; i++) await step();
-}));
-
-// Auto tick: one step, wait for the selected interval, repeat, until paused. Each step goes
-// through run(), so a create or a typed command slips in between ticks instead of being lost.
-let auto = null;
-function autoTick() {
-  if (auto === null) return;
-  run(step).then(() => {
-    if (auto === null) return;
-    const rate = +$('rate').value;
-    auto = setTimeout(autoTick, rate ? 1000 / rate : 0);
-  });
-}
-$('auto').onclick = () => {
-  if (auto === null) { auto = setTimeout(autoTick, 0); $('auto').textContent = 'pause'; }
-  else { clearTimeout(auto); auto = null; $('auto').textContent = 'auto tick'; }
+// ---- transport: one command in flight at a time, replies in order ----
+let send = null; const waiters = [];
+const LOG_MAX = 2000;   // lines kept in the transcript
+const append = (text, cls) => {
+  const span = document.createElement('span'); if (cls) span.className = cls; span.textContent = text + '\n'; log.append(span);
+  if (log.childElementCount > LOG_MAX) log.firstElementChild.remove();
+  if (log.checkVisibility()) log.scrollTop = log.scrollHeight;
 };
-$('cmd').onkeydown = (e) => { if (e.key !== 'Enter') return; const line = $('cmd').value.trim(); $('cmd').value = ''; if (!line) return;
-  run(async () => { if (line === 'create') return create(); if (line === 'tick') return step(); await cmd(line); await refresh(); }); };
-addEventListener('keydown', (e) => { if (e.key === ' ' && e.target === document.body) { e.preventDefault(); run(step); } });
-$('copy').onclick = () => navigator.clipboard.writeText(log.textContent);
+function cmd(line) {
+  return new Promise(resolve => { waiters.push(resolve); if (line !== null) { append('> ' + line); send(line); } })
+    .then(reply => { append(JSON.stringify(reply), reply.ok ? '' : 'err'); return reply; });
+}
+// One `task <pid>` per task we created; "no such task" means it has exited.
+async function refresh() {
+  for (const t of tasks) if (t.alive) { const s = await cmd(`task ${t.pid}`); t.alive = s.ok; if (s.ok) t.stat = s; }
+  draw(); renderTasks();
+}
+// `tick` replies with the pid running on each CPU ("cpu1": pid, ...; 0 = idle). Each command
+// is a ~15 ms round trip, so while the clock runs the table is refreshed at most every
+// REFRESH_MS rather than after every tick; a manual tick always refreshes.
+const REFRESH_MS = 250;
+let lastRefresh = 0;
+async function step(force = false) {
+  const r = await cmd('tick');
+  if (!r.ok) return;
+  timeline.push(Array.from({ length: ncpus }, (_, c) => r[`cpu${c + 1}`]));
+  if (force || performance.now() - lastRefresh > REFRESH_MS) { lastRefresh = performance.now(); await refresh(); }
+  else draw();
+}
+async function create() {
+  const r = await cmd('create');
+  if (r.ok) { tasks.push({ pid: r.pid, label: `t${tasks.length}`, alive: true }); await refresh(); }
+}
+// UI actions run one after another on a queue; buttons stay enabled, nothing is dropped.
+let queue = Promise.resolve();
+const enqueue = (fn) => { queue = queue.then(fn).catch(e => setStatus('error: ' + e.message, true)); return queue; };
 
-$('boot').onclick = async () => {
-  $('boot').disabled = true; $('ncpus').disabled = true; $('ntasks').disabled = true;
-  ncpus = +$('ncpus').value;
+// ---- clock: the ticks/s box drives it; 0 stops it, the step button stops it and ticks once ----
+let timer = 0;
+function schedule() {
+  clearTimeout(timer); timer = 0;
+  const rate = +$('speed').value || 0;
+  if (send && rate > 0) timer = setTimeout(() => enqueue(step).then(schedule), 1000 / rate);
+}
+$('speed').onchange = schedule;
+$('step').onclick = () => { $('speed').value = 0; schedule(); enqueue(() => step(true)); };
+$('create').onclick = () => enqueue(create);
+
+// ---- boot ----
+// The configuration lives in the URL, so it can be shared, and the VM boots as soon as the page
+// loads: ?tasks=5 initial tasks, ?sockets=1&clusters=1&cores=2&threads=2 the machine, and
+// ?cap=1024,512 one capacity per core. QEMU never exits under Emscripten, so Restart reloads
+// the page with the new query, which ends the current VM and boots the next one.
+const params = new URLSearchParams(location.search);
+const clamp = (el, v) => Math.min(+el.max, Math.max(+el.min, Number.isFinite(v) ? v : +el.value));
+const ntasks = Math.min(16, Math.max(0, parseInt(params.get('tasks')) || 5));
+for (const k of DIMS) $(k).value = clamp($(k), parseInt(params.get(k)));
+machine = { ...formMachine(), caps: (params.get('cap') ?? '').split(',').filter(Boolean).map(Number) };
+if (nCpus(machine) > MAX_CPUS) machine = { sockets: 1, clusters: 1, cores: 2, threads: 2, caps: [] };
+for (const k of DIMS) $(k).value = machine[k];
+ncpus = nCpus(machine);   // the VM's CPU count
+drawMachine(machine.caps);
+for (const k of DIMS) $(k).onchange = () => drawMachine(formMachine().caps);
+$('boot').onclick = () => {
+  const m = formMachine();
+  location.replace(`${location.pathname}?tasks=${ntasks}&${DIMS.map(k => `${k}=${m[k]}`).join('&')}&cap=${m.caps}`);
+};
+
+async function boot() {
   try {
     setStatus('downloading');
     const get = (u) => fetch(u).then(r => { if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`); return r.arrayBuffer(); });
@@ -224,21 +345,27 @@ $('boot').onclick = async () => {
     const t0 = performance.now();
     const r = await runKstep(Module, {
       files: { kernel, rootfs, bios: Object.fromEntries(BIOS.map((f, i) => [f, bios[i]])) },
-      driver: 'cli', smp: ncpus + 1, mem: play.mem_mb, cli: true,
+      driver: 'cli', smp: ncpus + 1, mem: play.mem_mb, cli: true, params: cpuParams(machine),
       locateFile: (f) => `qemu/${f}?v=${V}`,
       onLine: (ch, line) => {
-        if (ch === 'console') { con.append(line + '\n'); con.scrollTop = con.scrollHeight; if (line.includes('Kernel panic')) setStatus('kernel panic', true); }
+        if (ch === 'console') { con.append(line + '\n'); con.scrollTop = con.scrollHeight; if (line.includes('Kernel panic')) { setStatus('kernel panic', true); $('speed').value = 0; schedule(); } }
         else if (ch === 'cli') waiters.shift()?.(JSON.parse(line));
       },
     });
     send = r.send;
     await cmd(null);   // the driver's ready line
     setStatus(`ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
-    for (let i = 0; i < +$('ntasks').value; i++) await create();
-    document.querySelectorAll('.verb, #cmd').forEach(e => e.disabled = false);
+    for (let i = 0; i < ntasks; i++) await create();
+    $('clock').hidden = false; $('create').hidden = false;
     draw();
-  } catch (e) { setStatus('error: ' + e.message, true); $('boot').disabled = false; }
-};
+    schedule();          // start the clock at the speed in the box
+  } catch (e) { setStatus('error: ' + e.message, true); }
+}
+// coi-serviceworker reloads the page once on the first visit to get SharedArrayBuffer; boot
+// only on the isolated page. Hard reloads bypass service workers, hence the fallback message.
+if (crossOriginIsolated) boot();
+else { setStatus('waiting for the service worker to reload the page');
+  setTimeout(() => setStatus('This page needs SharedArrayBuffer, which the service worker provides. Do a normal reload (hard reloads bypass it); private browsing may block it entirely.', true), 3000); }
 draw();
 </script>
 </body>

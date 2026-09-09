@@ -52,7 +52,7 @@ for b in reproduce.BUGS + getattr(reproduce, "BUGS_EXTRA", []):
 # base unless PLAYGROUND_LOCAL points at a local build dir with kernel + rootfs.cpio (then the
 # images are copied into site/images/ for local testing).
 import os
-play = {"image": "cli", "base": base, "num_cpus": 2, "mem_mb": 128}
+play = {"image": "cli", "base": base, "mem_mb": 128}
 if os.environ.get("PLAYGROUND_LOCAL"):
     play["base"] = "images"
 print(json.dumps({"version": version, "base": base, "bugs": bugs, "playground": play}, indent=1))

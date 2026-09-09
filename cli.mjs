@@ -30,11 +30,11 @@ console.error(`ready after ${((Date.now() - t0) / 1000).toFixed(1)}s`, JSON.stri
 const pids = [];
 for (let i = 0; i < tasks; i++) pids.push((await cmd('create')).pid);
 const timeline = [];
-for (let i = 0; i < ticks; i++) { await cmd('tick'); timeline.push((await cmd('curr')).curr); }
+for (let i = 0; i < ticks; i++) { const r = await cmd('tick'); timeline.push(Array.from({ length: cpus }, (_, c) => r[`cpu${c + 1}`])); }
 const glyph = (p) => p ? String(pids.indexOf(p) >= 0 ? pids.indexOf(p) : '?') : '.';
 console.log('tasks', pids.map((p, i) => `t${i}=${p}`).join(' '));
 for (let c = 0; c < cpus; c++) console.log(`cpu${c + 1}`.padEnd(6), timeline.map(t => glyph(t[c])).join(''));
-for (const s of (await cmd('task')).tasks) console.log(`t${pids.indexOf(s.pid)} pid=${s.pid}: cpu=${s.cpu} runtime=${(s.sum_exec_runtime / 1e6).toFixed(1)}ms vruntime=${(s.vruntime / 1e6).toFixed(1)}ms`);
+for (const pid of pids) { const s = await cmd(`task ${pid}`); if (s.ok) console.log(`t${pids.indexOf(s.pid)} pid=${s.pid}: cpu=${s.cpu} runtime=${(s.sum_exec_runtime / 1e6).toFixed(1)}ms vruntime=${(s.vruntime / 1e6).toFixed(1)}ms`); }
 await cmd('exit');
 console.error(`done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 process.exit(0);

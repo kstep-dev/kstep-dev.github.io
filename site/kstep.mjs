@@ -19,18 +19,20 @@ export const BIOS = ['bios-256k.bin', 'linuxboot_dma.bin', 'kvmvapic.bin'];
 // kSTEP's run.py arguments for x86_64, plus tsc_early_khz: QEMU on a wasm host derives the
 // guest TSC from the JS clock (1 GHz, but only as fine as performance.now(), 1 ms in Safari),
 // and the kernel's PIT/HPET TSC calibration divides by zero when two reads coincide.
-export function bootArgs({ driver, smp }) {
+// `params` are extra kSTEP module parameters after the `--` (topology=, capacity=, ...).
+export function bootArgs({ driver, smp, params = {} }) {
   const isol = smp > 2 ? `1-${smp - 1}` : '1';
   return `rw nokaslr loglevel=7 sched_verbose isolcpus=nohz,managed_irq,${isol} irqaffinity=0 ` +
     `rcu_nocbs=${isol} nohz_full=${isol} init=/user panic=-1 console=ttyS0 tsc=nowatchdog ` +
-    `tsc_early_khz=1000000 -- driver=${driver}`;
+    `tsc_early_khz=1000000 -- driver=${driver}` +
+    Object.entries(params).filter(([, v]) => v).map(([k, v]) => ` ${k}=${v}`).join('');
 }
 
-export function qemuArgs({ driver, smp, mem, cli = false }) {
+export function qemuArgs({ driver, smp, mem, cli = false, params }) {
   return [
     '-smp', String(smp), '-cpu', 'max', '-m', `${mem}M`, '-L', '/bios',
     '-accel', 'tcg,tb-size=64,thread=multi',
-    '-kernel', '/kernel', '-initrd', '/rootfs.cpio', '-append', bootArgs({ driver, smp }),
+    '-kernel', '/kernel', '-initrd', '/rootfs.cpio', '-append', bootArgs({ driver, smp, params }),
     '-nographic', '-nodefaults', '-no-reboot',
     // /dev/kstep0..2 are Emscripten device nodes whose write callbacks push bytes to us.
     '-chardev', 'file,id=c0,path=/dev/kstep0', '-serial', 'chardev:c0',
@@ -42,7 +44,7 @@ export function qemuArgs({ driver, smp, mem, cli = false }) {
   ];
 }
 
-export async function runKstep(Module, { files, driver, smp, mem, onLine, locateFile, wasmBinary, cli = false, log = console.error }) {
+export async function runKstep(Module, { files, driver, smp, mem, onLine, locateFile, wasmBinary, cli = false, params, log = console.error }) {
   let resolveDone;
   const done = new Promise(r => { resolveDone = r; });
   const channels = { 0: 'console', 1: 'jsonl', 3: 'cli' };
@@ -60,7 +62,7 @@ export async function runKstep(Module, { files, driver, smp, mem, onLine, locate
   };
   const module = await Module({
     locateFile, wasmBinary,   // wasmBinary: pass the .wasm bytes if fetched by the caller (for progress)
-    arguments: qemuArgs({ driver, smp, mem, cli }),
+    arguments: qemuArgs({ driver, smp, mem, cli, params }),
     preRun: [(m) => {
       m.FS.mkdir('/bios');
       for (const [name, data] of Object.entries(files.bios)) m.FS.writeFile(`/bios/${name}`, new Uint8Array(data));

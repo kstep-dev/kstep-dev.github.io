@@ -22,7 +22,7 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 | `serve.sh` | same `data.json`, served locally with `python3 -m http.server` |
 | `run.mjs` | the same run, headless under Node (>= 20): for timing and for comparing traces against native QEMU |
 | `cli.mjs` | drives kSTEP's `cli` driver (kmod/cli) over a fourth serial port: the interactive round-robin demo, headless |
-| `site/play.html` | the playground: boot a kernel with the `cli` driver, then `create` tasks and `tick`; draws a timeline of who ran and a table of each task's counters, with a transcript of the session |
+| `site/play.html` | the playground: boots a kernel with the `cli` driver on a configurable machine (sockets × clusters × cores × threads, per-core capacity), creates tasks and ticks the scheduler; a timeline of who ran on which CPU, and a table of each task's counters with nice, affinity, pause/wake and kill controls |
 
 `KSTEP_DIR` is the kSTEP checkout; it defaults to `../..` (this repo as kSTEP's
 `docs/website` submodule) or `../kstep`. Everything else generated lives in `build/`.
@@ -32,7 +32,7 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 ```sh
 ./build.sh                            # first time ~15 min; ./build.sh qemu rebuilds QEMU only
 ./run.mjs --kernel sync_wakeup_buggy  # console -> stdout, results -> results/<image>-<driver>/
-./serve.sh 8080                       # http://localhost:8080/ ; PLAYGROUND_LOCAL=<dir with kernel+rootfs.cpio> serves play.html from a local image
+./serve.sh 8080                       # http://localhost:8080/ ; the playground image comes from ../../build/cli if present (or PLAYGROUND_LOCAL=<dir>)
 ./deploy.sh                           # https://kstep-dev.github.io/
 ```
 
