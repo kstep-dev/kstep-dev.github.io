@@ -1,116 +1,63 @@
 #!/bin/bash
-# Build qemu-system-x86_64 for a wasm64 host, end to end:
-#   ./build.sh            # all stages
-#   ./build.sh qemu       # just reconfigure+rebuild QEMU
-# Stages: setup (apt, emsdk, meson) -> deps (zlib, libffi, pixman, glib) -> qemu.
-# Output: site/qemu/ (qemu-system-x86_64.{js,wasm} + SeaBIOS blobs), served/deployed as-is
+# Build the site: everything site/ needs that is not tracked, around the wasm QEMU setup.sh
+# leaves in site/qemu/. Run it after changing the page, kSTEP's kmod, or the bug table.
+#   ./build.sh
+# site/ = index.html, reproduce.html, style.css, kstep.mjs, figures/, coi-serviceworker.min.js
+# (tracked) + qemu/ (from setup.sh) + data.json and images/cli (from here).
+# The browser fetches the bug images from the kstep-dev/build repo on GitHub, at the commit the
+# kSTEP `build` submodule pins; only the playground image travels with the site (see below).
+# serve.sh serves the result; deploy.sh checks it and publishes it.
 set -euo pipefail
 W=$(cd "$(dirname "$0")" && pwd)
-stage=${1:-all}
-mkdir -p "$W/build"
-# Kohei Tokunaga's QEMU branch carrying the wasm JIT backend (QEMU 10.2.50 + his 33
-# commits), pinned to a commit. See README for the v11.1.0 rebase attempt.
-QEMU_REPO=https://github.com/ktock/qemu
-QEMU_COMMIT=8f1406ba3307a10c58be24a8ff00ab6a5d3b6169   # branch wasm64-tcg-b, 2026-01-14
-EMSDK_VERSION=4.0.23
+# kSTEP checkout: ../.. when this repo is kSTEP's docs/website submodule, else a sibling ../kstep.
+KSTEP_DIR=${KSTEP_DIR:-$([ -f "$W/../../run.py" ] && echo "$W/../.." || echo "$W/../kstep")}
+[ -f "$W/site/qemu/qemu-system-x86_64.wasm" ] || { echo "no wasm build; run ./setup.sh"; exit 1; }
 
-toolchain() {  # emsdk, meson venv, and the cross-built deps prefix
-  source "$W/build/emsdk/emsdk_env.sh" >/dev/null 2>&1
-  export PATH="$W/build/venv/bin:$PATH"
-  export TARGET="$W/build/deps/target" CPATH="$W/build/deps/target/include"
-  export PKG_CONFIG_PATH="$TARGET/lib/pkgconfig" EM_PKG_CONFIG_PATH="$TARGET/lib/pkgconfig"
-}
-
-setup() {
-  sudo apt-get install -y -q autoconf build-essential libglib2.0-dev libtool pkgconf ninja-build python3-pip python3-venv
-  if [ ! -d "$W/build/emsdk" ]; then
-    git clone -q --depth 1 https://github.com/emscripten-core/emsdk.git "$W/build/emsdk"
-    (cd "$W/build/emsdk" && ./emsdk install $EMSDK_VERSION && ./emsdk activate $EMSDK_VERSION)
-  fi
-  [ -d "$W/build/venv" ] || { python3 -m venv "$W/build/venv" && "$W/build/venv/bin/pip" -q install meson==1.5.0 tomli; }
-}
-
-# Mirrors upstream tests/docker/dockerfiles/emsdk-wasm64-cross.docker, without Docker.
-deps() {
-  toolchain
-  export CFLAGS="-O3 -pthread -DWASM_BIGINT -sMEMORY64=1" CXXFLAGS="-O3 -pthread -DWASM_BIGINT -sMEMORY64=1"
-  export LDFLAGS="-sWASM_BIGINT -sASYNCIFY=1 -L$TARGET/lib -sMEMORY64=1"
-  mkdir -p "$TARGET" "$W/build/deps" && cd "$W/build/deps"
-  cat > cross.meson <<EOT
-[host_machine]
-system = 'emscripten'
-cpu_family = 'wasm64'
-cpu = 'wasm64'
-endian = 'little'
-[binaries]
-c = 'emcc'
-cpp = 'em++'
-ar = 'emar'
-ranlib = 'emranlib'
-pkgconfig = ['pkg-config', '--static']
-[built-in options]
-c_args = [$(printf "'%s', " $CFLAGS -Wno-incompatible-function-pointer-types | sed 's/, $//')]
-cpp_args = [$(printf "'%s', " $CXXFLAGS | sed 's/, $//')]
-c_link_args = [$(printf "'%s', " $LDFLAGS | sed 's/, $//')]
-cpp_link_args = [$(printf "'%s', " $LDFLAGS | sed 's/, $//')]
-EOT
-  if [ ! -f "$TARGET/lib/libz.a" ]; then
-    mkdir -p zlib && curl -Ls https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.xz | tar xJC zlib --strip-components=1
-    (cd zlib && emconfigure ./configure --prefix="$TARGET" --static && emmake make install -j"$(nproc)")
-  fi
-  if [ ! -f "$TARGET/lib/libffi.a" ]; then
-    [ -d libffi ] || git clone -q --depth 1 -b v3.5.2 https://github.com/libffi/libffi
-    (cd libffi && autoreconf -fiv && emconfigure ./configure --host=wasm64-unknown-linux --prefix="$TARGET" \
-      --enable-static --disable-shared --disable-dependency-tracking --disable-builddir \
-      --disable-multi-os-directory --disable-raw-api --disable-docs && emmake make install SUBDIRS='include' -j"$(nproc)")
-  fi
-  if [ ! -f "$TARGET/lib/libpixman-1.a" ]; then
-    [ -d pixman ] || git clone -q --depth 1 -b pixman-0.44.2 https://gitlab.freedesktop.org/pixman/pixman
-    (cd pixman && meson setup _build --prefix="$TARGET" --cross-file=../cross.meson \
-      --default-library=static --buildtype=release -Dtests=disabled -Ddemos=disabled && meson install -C _build)
-  fi
-  if [ ! -f "$TARGET/lib/libglib-2.0.a" ]; then
-    printf '#include <netdb.h>\nint res_query(const char *n, int c, int t, unsigned char *d, int l) { h_errno = HOST_NOT_FOUND; return -1; }\n' > res_query.c
-    emcc $CFLAGS -c res_query.c -o res_query.o && emar rcs "$TARGET/lib/libresolv.a" res_query.o
-    [ -d glib ] || { mkdir glib && curl -Ls https://download.gnome.org/sources/glib/2.84/glib-2.84.0.tar.xz | tar xJC glib --strip-components=1; }
-    (cd glib && rm -rf _build && meson setup _build --prefix="$TARGET" --cross-file=../cross.meson \
-      --default-library=static --buildtype=release --force-fallback-for=pcre2 \
-      -Dselinux=disabled -Dlibelf=disabled -Dxattr=false -Dlibmount=disabled -Dnls=disabled \
-      -Dtests=false -Dglib_debug=disabled -Dglib_assert=false -Dglib_checks=false \
-      && sed -i -E "/#define HAVE_POSIX_SPAWN 1/d;/#define HAVE_PTHREAD_GETNAME_NP 1/d" _build/config.h \
-      && meson install -C _build)
-  fi
-}
-
-qemu() {
-  toolchain
-  export CFLAGS="-O3 -pthread -DWASM_BIGINT" CXXFLAGS="-O3 -pthread -DWASM_BIGINT" LDFLAGS="-sWASM_BIGINT -sASYNCIFY=1 -L$TARGET/lib"
-  src="$W/build/qemu"
-  if [ ! -d "$src" ]; then
-    git init -q "$src" && git -C "$src" fetch -q --depth 1 "$QEMU_REPO" "$QEMU_COMMIT" && git -C "$src" checkout -q FETCH_HEAD
-  fi
-  # The wasm heap size is fixed at link time by QEMU's configs/meson/emscripten.txt (2 GB
-  # upstream). 1 GB is plenty: a run touches ~0.6 GB, and smaller reservations work on more
-  # browsers (phones, Safari).
-  sed -i 's/-sTOTAL_MEMORY=2GB/-sTOTAL_MEMORY=1GB/' "$src/configs/meson/emscripten.txt"
-  # The JIT compiles a translation block to wasm after it has run INSTANTIATE_NUM times in the
-  # interpreter (1500 upstream). kSTEP runs are short, so most time goes to interpreting boot
-  # code: 300 cut a run from 7.2 s to 6.0 s here (50: 5.6 s, but many more wasm modules).
-  sed -i 's/^#define INSTANTIATE_NUM .*/#define INSTANTIATE_NUM 300/' "$src/tcg/wasm64.c"
-  mkdir -p "$src/build" && cd "$src/build"
-  emconfigure ../configure --static --cpu=wasm64 --enable-wasm64-32bit-address-limit --cross-prefix= \
-    --target-list=x86_64-softmmu \
-    --enable-system --disable-user --disable-tools --disable-docs \
-    --without-default-features --with-coroutine=wasm \
-    --extra-cflags="-O3 -g0 -matomics -mbulk-memory -DNDEBUG -sASYNCIFY=1 -pthread -sPROXY_TO_PTHREAD=1 -sFORCE_FILESYSTEM -sWASM_BIGINT -sMALLOC=mimalloc"
-  emmake make -j"$(nproc)"
-  mkdir -p "$W/site/qemu"
-  cp qemu-system-x86_64.js qemu-system-x86_64.wasm ../pc-bios/bios-256k.bin ../pc-bios/linuxboot_dma.bin ../pc-bios/kvmvapic.bin "$W/site/qemu/"
-  ls -la "$W/site/qemu"
-}
-
-case $stage in
-  all) setup; deps; qemu ;;
-  setup|deps|qemu) $stage ;;
-  *) echo "usage: $0 [all|setup|deps|qemu]"; exit 1 ;;
-esac
+# data.json: cache-busting version, image base URL, and the bug catalog: reproduce.py's Bug
+# table joined with the README results table (driver source, fix links, plot) and the
+# images committed in the build repo.
+version="$(git -C "$W" rev-parse --short HEAD)-$(date -u +%Y%m%d%H%M)"
+url=$(git -C "$KSTEP_DIR/build" remote get-url origin | sed -E 's#\.git$##; s#^git@github.com:#https://github.com/#')
+base="${url/github.com/raw.githubusercontent.com}/$(git -C "$KSTEP_DIR/build" rev-parse HEAD)"
+images=$(git -C "$KSTEP_DIR/build" ls-files | sed -n 's#^\([^/]*\)/kernel$#\1#p')
+(cd "$KSTEP_DIR" && python3 - "$version" "$base" $images <<'PY'
+import json, re, sys
+import reproduce
+version, base, *images = sys.argv[1:]
+MAX_MEM_MB = 1024   # fits the 2 GB wasm heap; long_balance (4096 MB) is left out
+readme = open("README.md").read()
+titles = {}
+try:   # short human titles only exist on the old site; fall back to the driver name
+    old = open("docs/website-archive/index.html").read()
+    titles = dict(re.findall(r"<span>(\w+)\.c</span>\s*<strong>(.*?)</strong>", old))
+except FileNotFoundError:
+    pass
+rows = {}
+for line in readme.splitlines():
+    m = re.match(r"\| \*\*\[[^\]]+\]\((\S+?)\)\*\*(.*)", line)   # link text varies; key on the driver path
+    if not m: continue
+    path, rest = m.groups()
+    name = re.sub(r"\.c$", "", path.rsplit("/", 1)[-1])
+    rest = rest.split("**Run in browser**")[0]   # the row's links back to this site are not fixes
+    links = [(l, u) for l, u in re.findall(r"\[([^\]]+)\]\((\S+?)\)", rest) if not l.endswith(".jsonl")]
+    links = [(l, u if u.startswith("http") else f"https://github.com/kstep-dev/kstep/blob/master/{u}") for l, u in links]
+    plot = re.search(r"!\[\]\((\S+?)\)", line) or re.search(r'src="(\S+?)"', line)
+    rows[name] = {"driver_url": f"https://github.com/kstep-dev/kstep/blob/master/{path}",
+                  "fixes": [{"label": l, "url": u} for l, u in links], "plot": plot.group(1) if plot else None}
+bugs = []
+for b in reproduce.BUGS + getattr(reproduce, "BUGS_EXTRA", []):
+    imgs = {v: f"{b.name}_{v}" for v in ("buggy", "fixed") if f"{b.name}_{v}" in images}
+    if not imgs or b.mem_mb > MAX_MEM_MB: continue
+    bugs.append({"name": b.name, "title": titles.get(b.name, b.name), "num_cpus": b.num_cpus, "mem_mb": b.mem_mb,
+                 "images": imgs, **rows.get(b.name, {"driver_url": None, "fixes": [], "plot": None})})
+# Playground (index.html): a plain x86 kernel whose kmod has the `cli` driver. Unlike the bug
+# images, it ships with the site (site/images/cli, copied below from the kSTEP build dir), so
+# the page and the driver it talks to are always published together.
+print(json.dumps({"version": version, "base": base, "bugs": bugs,
+                  "playground": {"image": "cli", "base": "images", "mem_mb": 128}}, indent=1))
+PY
+) > "$W/site/data.json"
+CLI=${PLAYGROUND_LOCAL:-$KSTEP_DIR/build/cli}   # kernel + rootfs.cpio built from the current kmod and user.c
+[ -f "$CLI/kernel" ] && [ -f "$CLI/rootfs.cpio" ] || { echo "no playground image at $CLI (expected kernel + rootfs.cpio; PLAYGROUND_LOCAL=<dir> overrides)"; exit 1; }
+mkdir -p "$W/site/images/cli" && cp "$CLI/kernel" "$CLI/rootfs.cpio" "$W/site/images/cli/"
+echo "site/: $(du -sh "$W/site" | cut -f1); $(python3 -c "import json;print(len(json.load(open('$W/site/data.json'))['bugs']))") bugs, images from $base"

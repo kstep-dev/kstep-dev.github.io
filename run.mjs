@@ -20,7 +20,7 @@ const W = path.dirname(fileURLToPath(import.meta.url));
 const args = Object.fromEntries(process.argv.slice(2).map((a, i, all) => a.startsWith('--') ? [a.slice(2), all[i + 1] ?? ''] : []).filter(x => x.length));
 const kernel = args.kernel ?? 'sync_wakeup_buggy';
 let defaults = { driver: kernel.replace(/_(buggy|fixed)$/, ''), num_cpus: 2, mem_mb: 128 };
-try {  // defaults from site/data.json (deploy.sh), i.e. reproduce.py's values for the bug
+try {  // defaults from site/data.json (build.sh), i.e. reproduce.py's values for the bug
   const b = JSON.parse(fs.readFileSync(path.join(W, 'site', 'data.json'))).bugs.find(b => Object.values(b.images).includes(kernel));
   if (b) defaults = { driver: b.name, num_cpus: b.num_cpus, mem_mb: b.mem_mb };
 } catch {}
