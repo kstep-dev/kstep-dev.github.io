@@ -20,6 +20,7 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 | `build.sh` | `setup` (apt, emsdk, meson), `deps` (zlib, libffi, pixman, glib for wasm64), `qemu` (x86_64-softmmu into `site/qemu/`) |
 | `deploy.sh` | writes `site/data.json` (the bug table from kSTEP's `reproduce.py` and README, image URLs, version stamp) and force-pushes `site/` as the orphan `gh-pages` branch |
 | `serve.sh` | same `data.json`, served locally with `python3 -m http.server` |
+| `check.mjs` | boots the playground image the site points at and checks it answers every verb the page uses; `deploy.sh` runs it before publishing |
 | `run.mjs` | the same run, headless under Node (>= 20): for timing and for comparing traces against native QEMU; with `--kernel cli` it drives the playground's driver (round-robin demo) |
 | `site/index.html` | the front page: the playground, which boots a kernel with the `cli` driver on a configurable machine (sockets × clusters × cores × threads, per-core capacity), creates tasks and ticks the scheduler; a timeline of who ran on which CPU, and a table of each task's counters with nice, affinity, pause/wake and kill controls |
 

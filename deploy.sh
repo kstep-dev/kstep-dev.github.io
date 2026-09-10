@@ -65,6 +65,9 @@ else
 fi
 echo "site/: $(du -sh "$W/site" | cut -f1); $(python3 -c "import json;print(len(json.load(open('$W/site/data.json'))['bugs']))") bugs, images from $base"
 [ "${1:-}" = --stage-only ] && exit 0
+# Refuse to publish a page whose pinned playground image does not speak its protocol.
+NODE=$(ls "$W"/build/emsdk/node/*/bin/node 2>/dev/null | head -1 || command -v node)
+"$NODE" --wasm-lazy-compilation "$W/check.mjs" "$W/site/data.json" || { echo "deploy aborted: rebuild the cli image (cli/rootfs.cpio in the build repo) from the current kmod"; exit 1; }
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 cp -r "$W/site/." "$tmp/"
