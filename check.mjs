@@ -25,9 +25,9 @@ const { send } = await runKstep(Module, {
 });
 const cmd = (l) => new Promise(r => { waiters.push(r); if (l !== null) send(l); });
 await cmd(null);
-const pid = (await cmd('create')).pid;
+const pid = (await cmd('create')).task;
 // one command per verb the page sends; only "unknown command" counts as a failure
-const verbs = ['tick', `task ${pid}`, `nice ${pid} 0`, `affinity ${pid} 1`, `pause ${pid}`, `wake ${pid}`, 'cgroup-create /check', 'cgroup-weight /check 100', 'cgroup-cpus /check 1', `attach ${pid} /check`, `kill ${pid}`];
+const verbs = ['tick', 'top', `task ${pid}`, `nice ${pid} 0`, `policy ${pid} normal`, `affinity ${pid} 1`, `pause ${pid}`, `wake ${pid}`, 'cgroup-create /check', 'cgroup-weight /check 100', 'cgroup-cpus /check 1', `attach ${pid} /check`, `kill ${pid}`];
 const missing = [];
 for (const v of verbs) { const r = await cmd(v); if (r.error === 'unknown command') missing.push(v.split(' ')[0]); }
 await cmd('exit');

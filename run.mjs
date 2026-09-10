@@ -44,7 +44,7 @@ const { done, send } = await runKstep(Module, {
   onLine: (ch, line) => {
     out[ch].push(line);
     if (ch === 'console' && !('quiet' in args)) process.stdout.write(line + '\n');
-    if (cli && ch === 'jsonl') { const o = JSON.parse(line); if (!('type' in o)) waiters.shift()?.(o); }   // a reply, not a trace event
+    if (cli && ch === 'jsonl') { const o = JSON.parse(line); if (!('type' in o)) waiters.shift()?.(o); else if (o.type === 'task') waiters.records?.(o); }   // reply / `top` record / trace event
   },
 });
 console.error(`[${elapsed()}s] qemu started (${kernel}, driver=${driver}, smp=${smp}, mem=${mem}M)`);
@@ -54,13 +54,19 @@ if (cli) {   // drive the interactive driver: the round-robin demo
   const tasks = Number(args.tasks ?? 3), ticks = Number(args.ticks ?? 30), cpus = smp - 1;
   console.error(`[${elapsed()}s] ready`, JSON.stringify(await cmd(null)));
   const pids = [];
-  for (let i = 0; i < tasks; i++) pids.push((await cmd('create')).pid);
+  for (let i = 0; i < tasks; i++) pids.push((await cmd('create')).task);
   const timeline = [];
-  for (let i = 0; i < ticks; i++) { const r = await cmd('tick'); timeline.push(Array.from({ length: cpus }, (_, c) => r[`cpu${c + 1}`])); }
-  const glyph = (p) => p ? String(pids.indexOf(p) >= 0 ? pids.indexOf(p) : '?') : '.';
-  console.log('tasks', pids.map((p, i) => `t${i}=${p}`).join(' '));
+  let records = [];
+  waiters.records = (o) => records.push(o);
+  for (let i = 0; i < ticks; i++) {   // a step: tick, then `top` for who is running where
+    await cmd('tick'); records = []; await cmd('top');
+    timeline.push(Array.from({ length: cpus }, (_, c) => records.find(o => o.state === 'running' && o.cpu === c + 1)?.task ?? 0));
+  }
+  const glyph = (p) => p ? String(p) : '.';
+  console.log('tasks', pids.join(' '));
   for (let c = 0; c < cpus; c++) console.log(`cpu${c + 1}`.padEnd(6), timeline.map(t => glyph(t[c])).join(''));
-  for (const pid of pids) { const s = await cmd(`task ${pid}`); if (!s.error) console.log(`t${pids.indexOf(s.pid)} pid=${s.pid}: cpu=${s.cpu} runtime=${(s.sum_exec_runtime / 1e6).toFixed(1)}ms vruntime=${(s.vruntime / 1e6).toFixed(1)}ms`); }
+  records = []; await cmd('top');
+  for (const s of records) console.log(`task ${s.task}: ${s.state} cpu=${s.cpu} runtime=${(s.sum_exec_runtime / 1e6).toFixed(1)}ms vruntime=${(s.vruntime / 1e6).toFixed(1)}ms`);
   await cmd('exit');
 }
 const { panic } = await done;

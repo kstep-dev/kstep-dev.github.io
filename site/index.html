@@ -74,7 +74,7 @@
 <p class="hint" id="legend">One column per tick, a band per CPU, a row per task. <span title="a task's slice starts with a bar in the tick it migrated to this CPU (balancing or wakeup placement)">▎ migrated in</span> &nbsp; <span title="this CPU's load balancer looked for work in that tick (after should_we_balance)">┆ balancer ran</span>. Hover for details.</p>
 
 <h2>Tasks <span><button id="create" hidden>create task</button></span></h2>
-<table id="tasks"><thead><tr><th></th><th>task</th><th>state</th><th>cpu</th><th>affinity</th><th>nice</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th><th>cgroup</th><th></th></tr></thead><tbody></tbody></table>
+<table id="tasks"><thead><tr><th></th><th>task</th><th>state</th><th>cpu</th><th>affinity</th><th>nice</th><th>policy</th><th>weight</th><th>runtime ms</th><th>vruntime ms</th><th>deadline ms</th><th>slice ms</th><th>cgroup</th><th></th></tr></thead><tbody></tbody></table>
 
 <h2>Cgroups</h2>
 <table id="groups"><thead><tr><th>cgroup</th><th>weight</th><th>cpus</th><th>tasks</th><th></th></tr></thead><tbody></tbody></table>
@@ -155,13 +155,13 @@ catch (e) { setStatus('data.json failed: ' + e.message, true); }
 const { BIOS, runKstep } = await import(`./kstep.mjs?v=${V}`);
 
 // ---- session state ----
-const tasks = [];            // [{pid, label, stat, alive}] in creation order
-const timeline = [];         // per tick: [pid on CPU 1, pid on CPU 2, ...] (0 = idle)
-const balances = [];         // trace events: {tick: column, cpu: dst_cpu, pid (migrate only), src, domain}
+const tasks = [];            // [{id, stat, alive}] in creation order; the driver names tasks 1, 2, .. by creation
+const timeline = [];         // per tick: [task on CPU 1, task on CPU 2, ...] (0 = idle)
+const balances = [];         // trace events: {tick: column, cpu: dst_cpu, pid: task (migrate only), src, domain}
 let ncpus = 1;
-const labelOf = (pid) => tasks.find(t => t.pid === pid)?.label ?? String(pid);
+const labelOf = (pid) => String(pid);
 // Colours are fixed per creation order, so a task keeps its colour in the timeline after it exits.
-const colorOf = (pid) => { const i = tasks.findIndex(t => t.pid === pid); return i < 0 ? 'gray' : `hsl(${(i * 67) % 360}, 60%, 50%)`; };   // comma syntax: Safari's canvas parser
+const colorOf = (pid) => { const i = tasks.findIndex(t => t.id === pid); return i < 0 ? 'gray' : `hsl(${(i * 67) % 360}, 60%, 50%)`; };   // comma syntax: Safari's canvas parser
 
 // ---- machine: sockets x clusters x cores x threads over CPUs 1..N (CPU 0 stays kSTEP's own) ----
 // kSTEP's spec is LEVEL=group|group;... with every online CPU in exactly one group per level.
@@ -306,28 +306,32 @@ function cpuParams(m) {
 
 // ---- task table: rows are created once and updated in place (no rebuild, no flicker) ----
 const rowOf = new Map();
-const AFF = 4, NICE = 5, GRP = 11, ACT = 12;   // columns holding controls
-const stateOf = (s) => s.on_cpu ? 'running' : s.state === 0 ? 'runnable' : s.state & 3 ? 'sleeping' : String(s.state);
+const AFF = 4, NICE = 5, POL = 6, GRP = 12, ACT = 13;   // columns holding controls
 function renderTasks() {
   const tb = $('tasks').querySelector('tbody');
   const ms = (ns) => ns === undefined ? '' : (ns / 1e6).toFixed(1);
   for (const t of tasks) {
-    let tr = rowOf.get(t.pid);
-    if (!t.alive) { if (tr) { tr.remove(); rowOf.delete(t.pid); } continue; }
+    let tr = rowOf.get(t.id);
+    if (!t.alive) { if (tr) { tr.remove(); rowOf.delete(t.id); } continue; }
     if (!tr) {
-      tr = tb.insertRow(); rowOf.set(t.pid, tr);
-      for (let i = 0; i < 13; i++) tr.insertCell();
+      tr = tb.insertRow(); rowOf.set(t.id, tr);
+      for (let i = 0; i < 14; i++) tr.insertCell();
       tr.cells[ACT].style.whiteSpace = 'nowrap';
-      tr.cells[0].style.background = colorOf(t.pid); tr.cells[0].style.width = '.8rem';
+      tr.cells[0].style.background = colorOf(t.id); tr.cells[0].style.width = '.8rem';
       const nice = document.createElement('input'); nice.type = 'number'; nice.min = -20; nice.max = 19; nice.value = 0; nice.style.width = '2.9rem';
-      nice.onchange = () => enqueue(() => cmd(`nice ${t.pid} ${nice.value}`).then(refresh));
+      nice.onchange = () => enqueue(() => cmd(`nice ${t.id} ${nice.value}`).then(refresh));
       tr.cells[NICE].append(nice);
+      // scheduling class; real-time ones run at one fixed priority in the driver
+      const pol = document.createElement('select'); pol.title = 'scheduling class';
+      pol.replaceChildren(...['normal', 'batch', 'idle', 'fifo', 'rr'].map(v => new Option(v, v)));
+      pol.onchange = () => enqueue(() => cmd(`policy ${t.id} ${pol.value}`).then(refresh));
+      tr.cells[POL].append(pol);
       // affinity as a cpulist ("1-2,4"), passed to the kernel as is; it validates
       const aff = document.createElement('input'); aff.style.width = '3.6rem'; aff.title = 'CPUs the task may run on, e.g. 1-2,4';
       aff.onkeydown = (e) => { if (e.key === 'Enter') aff.blur(); };   // Enter or leaving the box applies
       aff.onchange = () => {
         enqueue(async () => {
-          const r = await cmd(`affinity ${t.pid} ${aff.value.replace(/\s+/g, '')}`);   // the driver splits on spaces
+          const r = await cmd(`affinity ${t.id} ${aff.value.replace(/\s+/g, '')}`);   // the driver splits on spaces
           aff.classList.toggle('bad', !!r.error);
           if (r.error) setStatus(`affinity: ${r.error}`, true); else await refresh();
         });
@@ -336,18 +340,20 @@ function renderTasks() {
       tr.cells[AFF].append(aff);
       // cgroup: a select over the root and the cgroups created so far
       const grp = document.createElement('select'); grp.title = 'cgroup of the task';
-      grp.onchange = () => enqueue(() => cmd(`attach ${t.pid} ${grp.value}`).then(refresh));
+      grp.onchange = () => enqueue(() => cmd(`attach ${t.id} ${grp.value}`).then(refresh));
       tr.cells[GRP].append(grp);
       // pause / wake (label follows the task's state) and kill
       const pause = document.createElement('button'); pause.textContent = 'pause';
-      pause.onclick = () => enqueue(() => cmd(`${pause.textContent} ${t.pid}`).then(refresh));
+      pause.onclick = () => enqueue(() => cmd(`${pause.textContent} ${t.id}`).then(refresh));
       const kill = document.createElement('button'); kill.textContent = 'kill'; kill.title = 'ask the task to exit';
-      kill.onclick = () => enqueue(() => cmd(`kill ${t.pid}`).then(refresh));
+      kill.onclick = () => enqueue(() => cmd(`kill ${t.id}`).then(refresh));
       tr.cells[ACT].append(pause, ' ', kill);
     }
     const s = t.stat ?? {};
     const nice = tr.cells[NICE].firstElementChild;
     if (s.nice !== undefined && document.activeElement !== nice) nice.value = s.nice;
+    const pol = tr.cells[POL].firstElementChild;
+    if (s.policy !== undefined && document.activeElement !== pol) pol.value = s.policy;
     const grp = tr.cells[GRP].firstElementChild;
     if (s.cgroup !== undefined) {
       if (!groups.has(s.cgroup) && s.cgroup !== '/') groups.set(s.cgroup, {});   // learned from the kernel
@@ -357,8 +363,8 @@ function renderTasks() {
     }
     const aff = tr.cells[AFF].firstElementChild;
     if (s.cpus !== undefined && document.activeElement !== aff) aff.value = s.cpus;
-    if (s.state !== undefined) tr.cells[ACT].firstElementChild.textContent = stateOf(s) === 'sleeping' ? 'wake' : 'pause';
-    [t.label, s.state === undefined ? '' : stateOf(s), s.cpu, undefined, undefined, s.weight, ms(s.sum_exec_runtime), ms(s.vruntime), ms(s.deadline), ms(s.slice)]
+    if (s.state !== undefined) tr.cells[ACT].firstElementChild.textContent = s.state === 'running' || s.state === 'runnable' ? 'pause' : 'wake';
+    [t.id, s.state ?? '', s.cpu, undefined, undefined, undefined, s.weight, ms(s.sum_exec_runtime), ms(s.vruntime), ms(s.deadline), ms(s.slice)]
       .forEach((v, i) => { if (v === undefined) return; const text = String(v); if (tr.cells[i + 1].textContent !== text) tr.cells[i + 1].textContent = text; });
   }
 }
@@ -396,13 +402,14 @@ function renderGroups() {
       child.onclick = () => enqueue(() => newGroup(path));
       tr.cells[4].append(child);
     }
-    const members = tasks.filter(t => t.alive && t.stat?.cgroup === path).map(t => t.label).join(', ');
+    const members = tasks.filter(t => t.alive && t.stat?.cgroup === path).map(t => t.id).join(', ');
     if (tr.cells[3].textContent !== members) tr.cells[3].textContent = members;
   }
 }
 
 // ---- transport: one command in flight at a time, replies in order ----
 let send = null; const waiters = [];
+let records = [];   // the {"type":"task"} records of the `top` in flight
 const LOG_MAX = 2000;   // lines kept in the transcript
 const append = (text, cls) => {
   const span = document.createElement('span'); if (cls) span.className = cls; span.textContent = text + '\n'; log.append(span);
@@ -413,27 +420,28 @@ function cmd(line) {
   return new Promise(resolve => { waiters.push(resolve); if (line !== null) { append('> ' + line); send(line); } })
     .then(reply => { append(JSON.stringify(reply), reply.error ? 'err' : ''); return reply; });
 }
-// One `task <pid>` per task we created; "no such task" means it has exited.
+// `top` answers one {"type":"task",...} record per live task and then its reply; a task of
+// ours without a record has exited. Returns the records.
 async function refresh() {
-  for (const t of tasks) if (t.alive) { const s = await cmd(`task ${t.pid}`); t.alive = !s.error; if (!s.error) t.stat = s; }
+  records = [];
+  await cmd('top');
+  const seen = new Map(records.map(o => [o.task, o]));
+  for (const t of tasks) if (t.alive) { t.alive = seen.has(t.id); if (t.alive) t.stat = seen.get(t.id); }
   draw(); renderTasks(); renderGroups();
+  return records;
 }
-// `tick` replies with the pid running on each CPU ("cpu1": pid, ...; 0 = idle). Each command
-// is a ~15 ms round trip, so while the clock runs the table is refreshed at most every
-// REFRESH_MS rather than after every tick; a manual tick always refreshes.
-const REFRESH_MS = 250;
-let lastRefresh = 0;
-const step_ = (force) => step(force);
-async function step(force = false) {
+// A step is a tick followed by a `top`: the running task on each CPU is the tick's timeline column.
+const step_ = () => step();
+async function step() {
   const r = await cmd('tick');
   if (r.error) return;
-  timeline.push(Array.from({ length: ncpus }, (_, c) => r[`cpu${c + 1}`]));
-  if (force || performance.now() - lastRefresh > REFRESH_MS) { lastRefresh = performance.now(); await refresh(); }
-  else draw();
+  const recs = await refresh();
+  timeline.push(Array.from({ length: ncpus }, (_, c) => recs.find(o => o.state === 'running' && o.cpu === c + 1)?.task ?? 0));
+  draw();
 }
 async function create() {
   const r = await cmd('create');
-  if (!r.error) { tasks.push({ pid: r.pid, label: `t${tasks.length}`, alive: true }); await refresh(); }
+  if (!r.error) { tasks.push({ id: r.task, alive: true }); await refresh(); }
 }
 // UI actions run one after another on a queue; buttons stay enabled, nothing is dropped.
 let queue = Promise.resolve();
@@ -456,20 +464,20 @@ $('create').onclick = () => enqueue(create);
 // ?cap=1024,512 one capacity per core. QEMU never exits under Emscripten, so Restart reloads
 // the page with the new query, which ends the current VM and boots the next one.
 // Scenarios: a machine, a number of tasks, a setup script run after boot (verbs as in the
-// driver, with task numbers t0.. instead of pids, and `tick N`), and what to look for.
+// driver; tasks are 1, 2, .. in creation order as in the driver, * means all; `tick N`), and what to look for.
 const SCENARIOS = {
   free: { title: 'Default', machine: { sockets: 1, clusters: 1, cores: 2, threads: 2 }, tasks: 5, steps: [],
     text: 'Five equal tasks on two cores with two threads each. Change nice values and affinities, pause and wake tasks, and watch the scheduler react.' },
   rr: { title: 'Round robin', machine: { sockets: 1, clusters: 1, cores: 1, threads: 1 }, tasks: 3, steps: [],
     text: 'Three equal tasks on one CPU. EEVDF runs them in turn, one slice each, and the pattern repeats; runtime and vruntime grow at the same rate for all three.' },
-  nice: { title: 'Weighted round robin', machine: { sockets: 1, clusters: 1, cores: 1, threads: 1 }, tasks: 3, steps: ['nice t0 -5', 'nice t2 5'],
-    text: 'One CPU, three tasks at nice -5, 0 and 5 (weights 3121, 1024, 335). CPU time is shared by weight: t0 gets about three slices for each of t1\u2019s, t2 about a third. Compare the runtime column; vruntime still advances evenly, because it is runtime divided by weight.' },
+  nice: { title: 'Weighted round robin', machine: { sockets: 1, clusters: 1, cores: 1, threads: 1 }, tasks: 3, steps: ['nice 1 -5', 'nice 3 5'],
+    text: 'One CPU, three tasks at nice -5, 0 and 5 (weights 3121, 1024, 335). CPU time is shared by weight: task 1 (nice -5) gets about three slices for each one of task 2\u2019s, task 3 (nice 5) about a third. Compare the runtime column; vruntime still advances evenly, because it is runtime divided by weight.' },
   two: { title: 'Two CPUs', machine: { sockets: 1, clusters: 1, cores: 2, threads: 1 }, tasks: 6, steps: [],
     text: 'Six equal tasks on two equal CPUs. Wakeup placement at creation leaves five on cpu1 and one on cpu2. The periodic balancer then moves one task at a time, roughly every 140 ticks, until the split is 3 : 3. Balancing is slow and stepwise, not instant; compare Big and little cores, where it stops earlier on purpose.' },
   balance: { title: 'Load balancing', machine: { sockets: 1, clusters: 1, cores: 2, threads: 1 }, tasks: 4, steps: ['affinity * 1', 'tick 10', 'affinity * 1-2'],
     text: 'Four tasks start pinned to cpu1 while cpu2 idles; after ten ticks they may run on either CPU. cpu2\u2019s balancer (dashed marks) looks for work at each balance interval and after a while pulls two tasks over in one go (bars at the start of their slices). Nothing moves immediately: balancing is periodic, not instant.' },
-  groups: { title: 'Cgroup fairness', machine: { sockets: 1, clusters: 1, cores: 1, threads: 1 }, tasks: 4, steps: ['cgroup-create /a', 'cgroup-create /b', 'attach t0 /a', 'attach t1 /b', 'attach t2 /b', 'attach t3 /b'],
-    text: 'One CPU, four equal tasks: t0 alone in cgroup /a, the other three together in /b. Fairness is applied between cgroups first, then within: t0 gets half the CPU, the three others a sixth each. Set /b\u2019s weight to 300 in the Cgroups table and all four become equal.' },
+  groups: { title: 'Cgroup fairness', machine: { sockets: 1, clusters: 1, cores: 1, threads: 1 }, tasks: 4, steps: ['cgroup-create /a', 'cgroup-create /b', 'attach 1 /a', 'attach 2 /b', 'attach 3 /b', 'attach 4 /b'],
+    text: 'One CPU, four equal tasks: task 1 alone in cgroup /a, the other three together in /b. Fairness is applied between cgroups first, then within: task 1 gets half the CPU, the three others a sixth each. Set /b\u2019s weight to 300 in the Cgroups table and all four become equal.' },
   little: { title: 'Big and little cores', machine: { sockets: 1, clusters: 1, cores: 2, threads: 1, caps: [1024, 512] }, tasks: 6, steps: [],
     text: 'The same six tasks, but cpu2 has half the capacity of cpu1. Placement again starts at 5 : 1. The balancer moves one task to the little core after a couple of hundred ticks and then stops at 4 : 2, matching the 2 : 1 capacity ratio; on equal CPUs (Two CPUs) it would continue to 3 : 3. Load is balanced per unit of capacity, not per task.' },
 };
@@ -520,11 +528,12 @@ async function boot() {
           // command replies with "error"
           const o = JSON.parse(line);
           if (!('type' in o)) waiters.shift()?.(o);   // a reply (events carry "type")
+          else if (o.type === 'task') { append(line); records.push(o); }   // a `top` record, part of the reply
           else if (o.type === 'load_balance' || o.type === 'migrate') {
             append(line, 'event');
             // the kernel's logical timestamp is the tick the event happened in (tick N -> column N-1);
             // arrival order is not reliable, the balancer's lines can trail the tick reply
-            balances.push({ tick: Math.max(0, o.timestamp - 1), cpu: o.dst_cpu, pid: o.type === 'migrate' ? o.pid : 0, src: o.src_cpu, domain: o.name });
+            balances.push({ tick: Math.max(0, o.timestamp - 1), cpu: o.dst_cpu, pid: o.type === 'migrate' ? o.task : 0, src: o.src_cpu, domain: o.name });
           }
         }
       },
@@ -533,13 +542,12 @@ async function boot() {
     await cmd(null);   // the driver's ready line
     setStatus(`ready in ${((performance.now() - t0) / 1000).toFixed(1)} s`);
     for (let i = 0; i < ntasks; i++) await create();
-    // scenario setup: "<verb> <t0|t1|*> args" or "tick N"; task names become pids
+    // scenario setup: driver lines as they are, except "tick N" and "*" for every task
     for (const step of scenario?.steps ?? []) {
       const [verb, who, ...rest] = step.split(' ');
       if (verb === 'tick') { for (let i = 0; i < +who; i++) await step_(); continue; }
       if (verb.startsWith('cgroup-')) { const r = await cmd(step); if (!r.error && verb === 'cgroup-create') groups.set(who, {}); continue; }
-      const targets = who === '*' ? tasks : [tasks[+who.slice(1)]];
-      for (const t of targets) { await cmd(`${verb} ${t.pid} ${rest.join(' ')}`.trim()); }
+      for (const t of who === '*' ? tasks : [{ id: who }]) await cmd(`${verb} ${t.id} ${rest.join(' ')}`.trim());
       await refresh();
     }
     $('clock').hidden = false; $('create').hidden = false;
