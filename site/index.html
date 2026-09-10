@@ -398,78 +398,99 @@ function cpuParams(m) {
 const rowOf = new Map();
 const AFF = 4, NICE = 5, POL = 6, GRP = 12, ACT = 13;   // columns holding controls
 const AFF_TITLE = 'CPUs the task may run on, e.g. 1-2,4';
-// Send a control's value as `<verb> <value>`. The value is read when the event fires, never
-// inside the queued callback: a refresh queued ahead of it would have rewritten the control.
-const onSet = (el, verb) => el.onchange = () => { const v = el.value; enqueue(() => cmd(`${verb} ${v}`).then(refresh)); };
-// Kernel state flows into a row's controls, but the user types into them too. Write only when
-// the kernel's own value changed since we last wrote it -- the rule the text cells below use.
-// A refresh carrying no news then leaves an edit alone, even one already blurred and queued.
+// A row's controls are inputs and views at once: the user types into them, but the same
+// settings get changed behind their back -- a scenario's setup script sends driver lines
+// directly, and a cgroup's cpuset narrows a task's CPUs -- so the kernel's value has to be
+// able to flow back in. Skip a control the user is in the middle of: focused, or with an edit
+// still in flight. A rejected edit keeps `pending`, so it stays on screen to be corrected
+// rather than being silently replaced.
 const sync = (el, v) => {
-  if (v === undefined || document.activeElement === el || el.dataset.synced === String(v)) return;
-  el.dataset.synced = String(v);
+  if (v === undefined || document.activeElement === el || el.dataset.pending) return;
   el.value = v;
 };
-function renderTasks() {
+// Send a control's value as `<verb> <value>`; the value is read when the event fires.
+const onSet = (el, verb) => el.onchange = () => {
+  const v = el.value;
+  el.dataset.pending = '1';
+  enqueue(async () => {
+    const r = await cmd(`${verb} ${v}`);
+    el.classList.toggle('bad', !!r.error);
+    if (r.error) return setStatus(`${verb.split(' ')[0]}: ${r.error}`, true);
+    await refresh();
+    delete el.dataset.pending;
+  });
+};
+// One task's row, created on first sight and updated in place. Per task rather than per
+// table, so a record can be shown the moment it arrives.
+function renderTask(t) {
   const tb = $('tasks').querySelector('tbody');
-  for (const t of tasks) {
-    let tr = rowOf.get(t.id);
-    if (!t.alive) { if (tr) { tr.remove(); rowOf.delete(t.id); } continue; }
-    if (!tr) {
-      tr = tb.insertRow(); rowOf.set(t.id, tr);
-      for (let i = 0; i < 14; i++) tr.insertCell();
-      tr.cells[ACT].style.whiteSpace = 'nowrap';
-      tr.cells[0].style.background = colorOf(t.id); tr.cells[0].style.width = '.8rem';
-      const nice = document.createElement('input'); nice.type = 'number'; nice.min = -20; nice.max = 19; nice.value = 0; nice.style.width = '2.9rem';
-      onSet(nice, `nice ${t.id}`);
-      tr.cells[NICE].append(nice);
-      // scheduling class; real-time ones run at one fixed priority in the driver
-      const pol = document.createElement('select'); pol.title = 'scheduling class';
-      pol.replaceChildren(...['normal', 'batch', 'idle', 'fifo', 'rr'].map(v => new Option(v, v)));
-      onSet(pol, `policy ${t.id}`);
-      tr.cells[POL].append(pol);
-      // affinity as a cpulist ("1-2,4"), passed to the kernel as is; it validates
-      const aff = document.createElement('input'); aff.style.width = '3.6rem'; aff.title = AFF_TITLE;
-      aff.onkeydown = (e) => { if (e.key === 'Enter') aff.blur(); };   // Enter or leaving the box applies
-      aff.onchange = () => {
-        const want = aff.value.replace(/\s+/g, '');   // the driver splits on spaces
-        enqueue(async () => {
-          const r = await cmd(`affinity ${t.id} ${want}`);
-          aff.classList.toggle('bad', !!r.error);
-          aff.title = r.error ? `affinity: ${r.error}` : AFF_TITLE;   // the status line is shared with the console
-          if (r.error) setStatus(`affinity: ${r.error}`, true); else await refresh();
-        });
-      };
-      aff.oninput = () => { aff.classList.remove('bad'); aff.title = AFF_TITLE; };
-      tr.cells[AFF].append(aff);
-      // cgroup: a select over the root and the cgroups created so far
-      const grp = document.createElement('select'); grp.title = 'cgroup of the task';
-      onSet(grp, `attach ${t.id}`);
-      tr.cells[GRP].append(grp);
-      // pause / wake (label follows the task's state) and kill
-      const pause = document.createElement('button'); pause.textContent = 'pause';
-      pause.onclick = () => enqueue(() => cmd(`${pause.textContent} ${t.id}`).then(refresh));
-      const kill = document.createElement('button'); kill.textContent = 'kill'; kill.title = 'ask the task to exit';
-      kill.onclick = () => enqueue(() => cmd(`kill ${t.id}`).then(refresh));
-      tr.cells[ACT].append(pause, ' ', kill);
-    }
-    const s = t.stat ?? {};
-    sync(tr.cells[NICE].firstElementChild, s.nice);
-    sync(tr.cells[POL].firstElementChild, s.policy);
-    const grp = tr.cells[GRP].firstElementChild;
-    if (s.cgroup !== undefined) {
-      if (!groups.has(s.cgroup) && s.cgroup !== '/') groups.set(s.cgroup, {});   // learned from the kernel
-      const want = groupPaths();
-      if ([...grp.options].map(o => o.value).join() !== want.join()) {
-        grp.replaceChildren(...want.map(g => new Option(g, g)));
-        delete grp.dataset.synced;   // rebuilding the options cleared the selection
-      }
-      sync(grp, s.cgroup);
-    }
-    sync(tr.cells[AFF].firstElementChild, s.cpus);
-    if (s.state !== undefined) tr.cells[ACT].firstElementChild.textContent = s.state === 'running' || s.state === 'runnable' ? 'pause' : 'wake';
-    [t.id, s.state ?? '', s.cpu, undefined, undefined, undefined, s.weight, ms(s.sum_exec_runtime), ms(s.vruntime), ms(s.deadline), ms(s.slice)]
-      .forEach((v, i) => { if (v === undefined) return; const text = String(v); if (tr.cells[i + 1].textContent !== text) tr.cells[i + 1].textContent = text; });
+  let tr = rowOf.get(t.id);
+  if (!t.alive) { if (tr) { tr.remove(); rowOf.delete(t.id); } return; }
+  if (!tr) {
+    tr = tb.insertRow(); rowOf.set(t.id, tr);
+    for (let i = 0; i < 14; i++) tr.insertCell();
+    tr.cells[ACT].style.whiteSpace = 'nowrap';
+    tr.cells[0].style.background = colorOf(t.id); tr.cells[0].style.width = '.8rem';
+    const nice = document.createElement('input'); nice.type = 'number'; nice.min = -20; nice.max = 19; nice.value = 0; nice.style.width = '2.9rem';
+    onSet(nice, `nice ${t.id}`);
+    tr.cells[NICE].append(nice);
+    // scheduling class; real-time ones run at one fixed priority in the driver
+    const pol = document.createElement('select'); pol.title = 'scheduling class';
+    pol.replaceChildren(...['normal', 'batch', 'idle', 'fifo', 'rr'].map(v => new Option(v, v)));
+    onSet(pol, `policy ${t.id}`);
+    tr.cells[POL].append(pol);
+    // affinity as a cpulist ("1-2,4"), passed to the kernel as is; it validates
+    const aff = document.createElement('input'); aff.style.width = '3.6rem'; aff.title = AFF_TITLE;
+    aff.onkeydown = (e) => { if (e.key === 'Enter') aff.blur(); };   // Enter or leaving the box applies
+    aff.onchange = () => {
+      const want = aff.value.replace(/\s+/g, '');   // the driver splits on spaces
+      aff.dataset.pending = '1';
+      enqueue(async () => {
+        const r = await cmd(`affinity ${t.id} ${want}`);
+        aff.classList.toggle('bad', !!r.error);
+        aff.title = r.error ? `affinity: ${r.error}` : AFF_TITLE;   // the status line is shared with the console
+        if (r.error) return setStatus(`affinity: ${r.error}`, true);
+        await refresh();
+        delete aff.dataset.pending;
+      });
+    };
+    aff.oninput = () => { aff.classList.remove('bad'); aff.title = AFF_TITLE; };
+    tr.cells[AFF].append(aff);
+    // cgroup: a select over the root and the cgroups created so far
+    const grp = document.createElement('select'); grp.title = 'cgroup of the task';
+    onSet(grp, `attach ${t.id}`);
+    tr.cells[GRP].append(grp);
+    // pause / wake (label follows the task's state) and kill
+    const pause = document.createElement('button'); pause.textContent = 'pause';
+    pause.onclick = () => enqueue(() => cmd(`${pause.textContent} ${t.id}`).then(refresh));
+    const kill = document.createElement('button'); kill.textContent = 'kill'; kill.title = 'ask the task to exit';
+    kill.onclick = () => enqueue(() => cmd(`kill ${t.id}`).then(refresh));
+    tr.cells[ACT].append(pause, ' ', kill);
   }
+  const s = t.stat ?? {};
+  sync(tr.cells[NICE].firstElementChild, s.nice);
+  sync(tr.cells[POL].firstElementChild, s.policy);
+  sync(tr.cells[AFF].firstElementChild, s.cpus);
+  // the cgroup select offers the root and every cgroup created so far; rebuilding its options
+  // clears the selection, so set it from the kernel afterwards
+  if (s.cgroup !== undefined && !groups.has(s.cgroup) && s.cgroup !== '/') groups.set(s.cgroup, {});
+  const grp = tr.cells[GRP].firstElementChild, want = groupPaths();
+  if ([...grp.options].map(o => o.value).join() !== want.join())
+    grp.replaceChildren(...want.map(g => new Option(g, g)));
+  sync(grp, s.cgroup);
+  if (s.state !== undefined) tr.cells[ACT].firstElementChild.textContent = s.state === 'running' || s.state === 'runnable' ? 'pause' : 'wake';
+  [t.id, s.state ?? '', s.cpu, undefined, undefined, undefined, s.weight, ms(s.sum_exec_runtime), ms(s.vruntime), ms(s.deadline), ms(s.slice)]
+    .forEach((v, i) => { if (v === undefined) return; const text = String(v); if (tr.cells[i + 1].textContent !== text) tr.cells[i + 1].textContent = text; });
+}
+
+// A task record, from `top` or `task <n>`: show it now, and note that this snapshot
+// mentioned the task (see refresh).
+function applyTask(o) {
+  const t = tasks.find((t) => t.id === o.task);
+  if (!t) return;
+  mentioned.add(o.task);
+  t.stat = o; t.alive = true;
+  renderTask(t);
 }
 
 // ---- cgroups: a tree under the root "/" (path -> {weight, cpus}); the table lists the root
@@ -512,7 +533,6 @@ function renderGroups() {
 
 // ---- transport: one command in flight at a time, replies in order ----
 let send = null; const waiters = [];
-let records = [];   // the {"type":"task"} records of the `top` in flight
 const LOG_MAX = 2000;   // lines kept in the transcript
 const append = (text, cls) => {
   const span = document.createElement('span'); if (cls) span.className = cls; span.textContent = text + '\n'; log.append(span);
@@ -523,24 +543,25 @@ function cmd(line) {
   return new Promise(resolve => { waiters.push(resolve); if (line !== null) { append('> ' + line); send(line); } })
     .then(reply => { append(JSON.stringify(reply), reply.error ? 'err' : ''); return reply; });
 }
-// `top` answers one {"type":"task",...} record per live task and then its reply; a task of
-// ours without a record has exited. Returns the records.
+// `top` answers one {"type":"task",...} record per live task and then its reply. Records are
+// shown the moment they arrive (applyTask); a task of ours the snapshot never mentioned has
+// exited -- the one thing that cannot be known before the reply lands.
+let mentioned = new Set();
 async function refresh() {
-  records = []; cpuRecords = new Map();
+  mentioned = new Set();
+  cpuRecords = new Map();
   const reply = await cmd('top');
   if (reply.error) throw new Error(reply.error);
-  const seen = new Map(records.map(o => [o.task, o]));
-  for (const t of tasks) if (t.alive) { t.alive = seen.has(t.id); if (t.alive) t.stat = seen.get(t.id); }
-  draw(); renderTasks(); renderGroups(); renderCpus();
-  return records;
+  for (const t of tasks) if (t.alive && !mentioned.has(t.id)) { t.alive = false; renderTask(t); }
+  renderGroups(); renderCpus();   // not draw(): the timeline is a function of the ticks so far
 }
-// A step is a tick followed by a `top`: the running task on each CPU is the tick's timeline column.
-const step_ = () => step();
+// A step is a tick followed by a `top`: the task each CPU is running is the tick's timeline
+// column, taken from the "cpu" records' `current`.
 async function step() {
   const r = await cmd('tick');
   if (r.error) return;
-  const recs = await refresh();
-  timeline.push(Array.from({ length: ncpus }, (_, c) => recs.find(o => o.state === 'running' && o.cpu === c + 1)?.task ?? 0));
+  await refresh();
+  timeline.push(Array.from({ length: ncpus }, (_, c) => cpuRecords.get(c + 1)?.current ?? 0));
   draw();
 }
 async function create() {
@@ -652,7 +673,7 @@ async function boot() {
           const o = JSON.parse(line);
           if (!('type' in o)) waiters.shift()?.(o);   // a reply (events carry "type")
           else if (o.type === 'cpu') { cpuRecords.set(o.cpu, o); append(line); }
-          else if (o.type === 'task') { append(line); records.push(o); }   // a `top` record, part of the reply
+          else if (o.type === 'task') { append(line); applyTask(o); }   // a record: shown right away
           else if (o.type === 'load_balance' || o.type === 'migrate') {
             append(line, 'event');
             // the kernel's logical timestamp is the tick the event happened in (tick N -> column N-1);
@@ -667,10 +688,10 @@ async function boot() {
     setStatus('Preparing tasks…', false, true);
     for (let i = 0; i < ntasks; i++) await create();
     // scenario setup: driver lines as they are, except "tick N" and "*" for every task
-    for (const step of scenario?.steps ?? []) {
-      const [verb, who, ...rest] = step.split(' ');
-      if (verb === 'tick') { for (let i = 0; i < +who; i++) await step_(); continue; }
-      if (verb.startsWith('cgroup-')) { const r = await cmd(step); if (!r.error && verb === 'cgroup-create') groups.set(who, {}); continue; }
+    for (const line of scenario?.steps ?? []) {
+      const [verb, who, ...rest] = line.split(' ');
+      if (verb === 'tick') { for (let i = 0; i < +who; i++) await step(); continue; }
+      if (verb.startsWith('cgroup-')) { const r = await cmd(line); if (!r.error && verb === 'cgroup-create') groups.set(who, {}); continue; }
       for (const t of who === '*' ? tasks : [{ id: who }]) await cmd(`${verb} ${t.id} ${rest.join(' ')}`.trim());
       await refresh();
     }
