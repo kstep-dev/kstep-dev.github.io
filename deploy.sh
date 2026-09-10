@@ -3,8 +3,8 @@
 # branch; history is not kept there.
 #   ./deploy.sh [--stage-only]
 # site/ = index.html, reproduce.html, style.css, kstep.mjs, figures/, coi-serviceworker.min.js (tracked) + qemu/ (from build.sh) + data.json.
-# The browser fetches kernel images from the kstep-dev/build repo on GitHub, at the commit
-# the kSTEP `build` submodule pins, so the site carries no images.
+# The browser fetches the bug images from the kstep-dev/build repo on GitHub, at the commit the
+# kSTEP `build` submodule pins; only the playground image travels with the site (see below).
 set -euo pipefail
 W=$(cd "$(dirname "$0")" && pwd)
 # kSTEP checkout: ../.. when this repo is kSTEP's docs/website submodule, else a sibling ../kstep.
@@ -48,26 +48,21 @@ for b in reproduce.BUGS + getattr(reproduce, "BUGS_EXTRA", []):
     if not imgs or b.mem_mb > MAX_MEM_MB: continue
     bugs.append({"name": b.name, "title": titles.get(b.name, b.name), "num_cpus": b.num_cpus, "mem_mb": b.mem_mb,
                  "images": imgs, **rows.get(b.name, {"driver_url": None, "fixes": [], "plot": None})})
-# Playground (index.html): a plain kernel whose kmod has the `cli` driver. Served from the same
-# base unless PLAYGROUND_LOCAL points at a local build dir with kernel + rootfs.cpio (then the
-# images are copied into site/images/ for local testing).
-import os
-play = {"image": "cli", "base": base, "mem_mb": 128}
-if os.environ.get("PLAYGROUND_LOCAL"):
-    play["base"] = "images"
-print(json.dumps({"version": version, "base": base, "bugs": bugs, "playground": play}, indent=1))
+# Playground (index.html): a plain x86 kernel whose kmod has the `cli` driver. Unlike the bug
+# images, it ships with the site (site/images/cli, copied below from the kSTEP build dir), so
+# the page and the driver it talks to are always published together.
+print(json.dumps({"version": version, "base": base, "bugs": bugs,
+                  "playground": {"image": "cli", "base": "images", "mem_mb": 128}}, indent=1))
 PY
 ) > "$W/site/data.json"
-if [ -n "${PLAYGROUND_LOCAL:-}" ]; then
-  mkdir -p "$W/site/images/cli" && cp "$PLAYGROUND_LOCAL/kernel" "$PLAYGROUND_LOCAL/rootfs.cpio" "$W/site/images/cli/"
-else
-  rm -rf "$W/site/images"
-fi
+CLI=${PLAYGROUND_LOCAL:-$KSTEP_DIR/build/cli}   # kernel + rootfs.cpio built from the current kmod and user.c
+[ -f "$CLI/kernel" ] && [ -f "$CLI/rootfs.cpio" ] || { echo "no playground image at $CLI (expected kernel + rootfs.cpio; PLAYGROUND_LOCAL=<dir> overrides)"; exit 1; }
+mkdir -p "$W/site/images/cli" && cp "$CLI/kernel" "$CLI/rootfs.cpio" "$W/site/images/cli/"
 echo "site/: $(du -sh "$W/site" | cut -f1); $(python3 -c "import json;print(len(json.load(open('$W/site/data.json'))['bugs']))") bugs, images from $base"
 [ "${1:-}" = --stage-only ] && exit 0
-# Refuse to publish a page whose pinned playground image does not speak its protocol.
+# Refuse to publish a page whose playground image does not speak its protocol.
 NODE=$(ls "$W"/build/emsdk/node/*/bin/node 2>/dev/null | head -1 || command -v node)
-"$NODE" --wasm-lazy-compilation "$W/check.mjs" "$W/site/data.json" || { echo "deploy aborted: rebuild the cli image (cli/rootfs.cpio in the build repo) from the current kmod"; exit 1; }
+"$NODE" --wasm-lazy-compilation "$W/check.mjs" "$W/site/data.json" || { echo "deploy aborted: rebuild $CLI from the current kmod and user.c"; exit 1; }
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 cp -r "$W/site/." "$tmp/"

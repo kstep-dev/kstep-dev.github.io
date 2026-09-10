@@ -18,7 +18,7 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 | `site/` | the published site. Tracked: `index.html` (playground + bug catalog + paper), `reproduce.html` (bug reproducer), `style.css`, `kstep.mjs`, `figures/`, `assets/` (paper PDF), `coi-serviceworker.min.js`. Generated, gitignored: `qemu/` (from `build.sh`) and `data.json` (from `deploy.sh`) |
 | `site/kstep.mjs` | shared by the page and `run.mjs`: QEMU arguments, image loading, output plumbing, completion detection |
 | `build.sh` | `setup` (apt, emsdk, meson), `deps` (zlib, libffi, pixman, glib for wasm64), `qemu` (x86_64-softmmu into `site/qemu/`) |
-| `deploy.sh` | writes `site/data.json` (the bug table from kSTEP's `reproduce.py` and README, image URLs, version stamp) and force-pushes `site/` as the orphan `gh-pages` branch |
+| `deploy.sh` | writes `site/data.json` (the bug table from kSTEP's `reproduce.py` and README, image URLs, version stamp), copies the playground image (`build/cli` of the kSTEP checkout: kernel + rootfs.cpio with the `cli` driver) into `site/images/`, checks it with `check.mjs`, and force-pushes `site/` as the orphan `gh-pages` branch |
 | `serve.sh` | same `data.json`, served locally with `python3 -m http.server` |
 | `check.mjs` | boots the playground image the site points at and checks it answers every verb the page uses; `deploy.sh` runs it before publishing |
 | `run.mjs` | the same run, headless under Node (>= 20): for timing and for comparing traces against native QEMU; with `--kernel cli` it drives the playground's driver (round-robin demo) |
@@ -32,7 +32,7 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 ```sh
 ./build.sh                            # first time ~15 min; ./build.sh qemu rebuilds QEMU only
 ./run.mjs --kernel sync_wakeup_buggy  # console -> stdout, results -> results/<image>-<driver>/
-./serve.sh 8080                       # http://localhost:8080/ ; the playground image comes from ../../build/cli if present (or PLAYGROUND_LOCAL=<dir>)
+./serve.sh 8080                       # http://localhost:8080/ ; the playground image is taken from ../../build/cli (or PLAYGROUND_LOCAL=<dir>)
 ./deploy.sh                           # https://kstep-dev.github.io/
 ```
 
