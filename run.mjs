@@ -33,7 +33,7 @@ const t0 = Date.now(), elapsed = () => ((Date.now() - t0) / 1000).toFixed(1);
 const Module = (await import(path.join(qdir, 'qemu-system-x86_64.js'))).default;
 const cli = driver === 'cli';
 const out = { console: [], jsonl: [], cov: [] };
-const waiters = [];   // cli: replies come on the trace as JSON lines with an "ok" field, in command order
+const waiters = [];   // cli: replies come on the trace as JSON lines without a "type" field, in command order
 const { done, send } = await runKstep(Module, {
   files: {
     kernel: fs.readFileSync(path.join(kdir, 'kernel')),
@@ -44,7 +44,7 @@ const { done, send } = await runKstep(Module, {
   onLine: (ch, line) => {
     out[ch].push(line);
     if (ch === 'console' && !('quiet' in args)) process.stdout.write(line + '\n');
-    if (cli && ch === 'jsonl') { const o = JSON.parse(line); if ('ok' in o) waiters.shift()?.(o); }
+    if (cli && ch === 'jsonl') { const o = JSON.parse(line); if (!('type' in o)) waiters.shift()?.(o); }   // a reply, not a trace event
   },
 });
 console.error(`[${elapsed()}s] qemu started (${kernel}, driver=${driver}, smp=${smp}, mem=${mem}M)`);
@@ -60,7 +60,7 @@ if (cli) {   // drive the interactive driver: the round-robin demo
   const glyph = (p) => p ? String(pids.indexOf(p) >= 0 ? pids.indexOf(p) : '?') : '.';
   console.log('tasks', pids.map((p, i) => `t${i}=${p}`).join(' '));
   for (let c = 0; c < cpus; c++) console.log(`cpu${c + 1}`.padEnd(6), timeline.map(t => glyph(t[c])).join(''));
-  for (const pid of pids) { const s = await cmd(`task ${pid}`); if (s.ok) console.log(`t${pids.indexOf(s.pid)} pid=${s.pid}: cpu=${s.cpu} runtime=${(s.sum_exec_runtime / 1e6).toFixed(1)}ms vruntime=${(s.vruntime / 1e6).toFixed(1)}ms`); }
+  for (const pid of pids) { const s = await cmd(`task ${pid}`); if (!s.error) console.log(`t${pids.indexOf(s.pid)} pid=${s.pid}: cpu=${s.cpu} runtime=${(s.sum_exec_runtime / 1e6).toFixed(1)}ms vruntime=${(s.vruntime / 1e6).toFixed(1)}ms`); }
   await cmd('exit');
 }
 const { panic } = await done;
