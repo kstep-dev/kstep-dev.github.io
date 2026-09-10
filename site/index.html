@@ -397,6 +397,10 @@ function cpuParams(m) {
 // ---- task table: rows are created once and updated in place (no rebuild, no flicker) ----
 const rowOf = new Map();
 const AFF = 4, NICE = 5, POL = 6, GRP = 12, ACT = 13;   // columns holding controls
+const AFF_TITLE = 'CPUs the task may run on, e.g. 1-2,4';
+// Send a control's value as `<verb> <value>`. The value is read when the event fires, never
+// inside the queued callback: a refresh queued ahead of it would have rewritten the control.
+const onSet = (el, verb) => el.onchange = () => { const v = el.value; enqueue(() => cmd(`${verb} ${v}`).then(refresh)); };
 // Kernel state flows into a row's controls, but the user types into them too. Write only when
 // the kernel's own value changed since we last wrote it -- the rule the text cells below use.
 // A refresh carrying no news then leaves an edit alone, even one already blurred and queued.
@@ -416,29 +420,30 @@ function renderTasks() {
       tr.cells[ACT].style.whiteSpace = 'nowrap';
       tr.cells[0].style.background = colorOf(t.id); tr.cells[0].style.width = '.8rem';
       const nice = document.createElement('input'); nice.type = 'number'; nice.min = -20; nice.max = 19; nice.value = 0; nice.style.width = '2.9rem';
-      nice.onchange = () => { const v = nice.value; enqueue(() => cmd(`nice ${t.id} ${v}`).then(refresh)); };
+      onSet(nice, `nice ${t.id}`);
       tr.cells[NICE].append(nice);
       // scheduling class; real-time ones run at one fixed priority in the driver
       const pol = document.createElement('select'); pol.title = 'scheduling class';
       pol.replaceChildren(...['normal', 'batch', 'idle', 'fifo', 'rr'].map(v => new Option(v, v)));
-      pol.onchange = () => { const v = pol.value; enqueue(() => cmd(`policy ${t.id} ${v}`).then(refresh)); };
+      onSet(pol, `policy ${t.id}`);
       tr.cells[POL].append(pol);
       // affinity as a cpulist ("1-2,4"), passed to the kernel as is; it validates
-      const aff = document.createElement('input'); aff.style.width = '3.6rem'; aff.title = 'CPUs the task may run on, e.g. 1-2,4';
+      const aff = document.createElement('input'); aff.style.width = '3.6rem'; aff.title = AFF_TITLE;
       aff.onkeydown = (e) => { if (e.key === 'Enter') aff.blur(); };   // Enter or leaving the box applies
       aff.onchange = () => {
         const want = aff.value.replace(/\s+/g, '');   // the driver splits on spaces
         enqueue(async () => {
           const r = await cmd(`affinity ${t.id} ${want}`);
           aff.classList.toggle('bad', !!r.error);
+          aff.title = r.error ? `affinity: ${r.error}` : AFF_TITLE;   // the status line is shared with the console
           if (r.error) setStatus(`affinity: ${r.error}`, true); else await refresh();
         });
       };
-      aff.oninput = () => aff.classList.remove('bad');
+      aff.oninput = () => { aff.classList.remove('bad'); aff.title = AFF_TITLE; };
       tr.cells[AFF].append(aff);
       // cgroup: a select over the root and the cgroups created so far
       const grp = document.createElement('select'); grp.title = 'cgroup of the task';
-      grp.onchange = () => { const v = grp.value; enqueue(() => cmd(`attach ${t.id} ${v}`).then(refresh)); };
+      onSet(grp, `attach ${t.id}`);
       tr.cells[GRP].append(grp);
       // pause / wake (label follows the task's state) and kill
       const pause = document.createElement('button'); pause.textContent = 'pause';
