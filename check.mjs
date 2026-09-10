@@ -18,10 +18,11 @@ const get = async (name) => {
 const qdir = path.join(W, 'site', 'qemu');
 const Module = (await import(path.join(qdir, 'qemu-system-x86_64.js'))).default;
 const waiters = [];
+let cpuRecords = [];
 const { send } = await runKstep(Module, {
   files: { kernel: await get('kernel'), rootfs: await get('rootfs.cpio'), bios: Object.fromEntries(BIOS.map(f => [f, fs.readFileSync(path.join(qdir, f))])) },
   driver: 'cli', smp: 2, mem: play.mem_mb, cli: true,
-  onLine: (ch, line) => { if (ch === 'jsonl') { const o = JSON.parse(line); if (!('type' in o)) waiters.shift()?.(o); } },
+  onLine: (ch, line) => { if (ch === 'jsonl') { const o = JSON.parse(line); if (o.type === 'cpu') cpuRecords.push(o); if (!('type' in o)) waiters.shift()?.(o); } },
 });
 const cmd = (l) => new Promise(r => { waiters.push(r); if (l !== null) send(l); });
 await cmd(null);
@@ -30,7 +31,13 @@ const pid = (await cmd('create')).task;
 const verbs = ['tick', 'top', `task ${pid}`, `nice ${pid} 0`, `policy ${pid} normal`, `affinity ${pid} 1`, `pause ${pid}`, `wake ${pid}`, 'cgroup-create /check', 'cgroup-weight /check 100', 'cgroup-cpus /check 1', `attach ${pid} /check`, `kill ${pid}`];
 const missing = [];
 for (const v of verbs) { const r = await cmd(v); if (r.error === 'unknown command') missing.push(v.split(' ')[0]); }
+cpuRecords = [];
+await cmd('top');
+const cpu = cpuRecords.find(r => r.cpu === 1);
+const fields = ['current', 'nr_running', 'capacity', 'nr_switches', 'cfs_util_avg', 'cfs_load_avg', 'cfs_runnable_avg'];
+const statsOk = cpuRecords.length === 1 && cpu && typeof cpu.idle === 'boolean' && fields.every(k => Number.isFinite(cpu[k]) && cpu[k] >= 0);
 await cmd('exit');
+if (!statsOk) { console.error('playground image lacks valid CPU/runqueue snapshots; rebuild it from the current kmod'); process.exit(1); }
 if (missing.length) { console.error(`image at ${play.base}/${play.image} lacks: ${missing.join(', ')}`); process.exit(1); }
-console.log(`image at ${play.base}/${play.image}: all ${verbs.length} verbs answered`);
+console.log(`image at ${play.base}/${play.image}: all ${verbs.length} verbs answered; CPU/runqueue snapshot verified`);
 process.exit(0);

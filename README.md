@@ -22,7 +22,7 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 | `serve.sh` | same `data.json`, served locally with `python3 -m http.server` |
 | `check.mjs` | boots the playground image the site points at and checks it answers every verb the page uses; `deploy.sh` runs it before publishing |
 | `run.mjs` | the same run, headless under Node (>= 20): for timing and for comparing traces against native QEMU; with `--kernel cli` it drives the playground's driver (round-robin demo) |
-| `site/index.html` | the front page: the playground, which boots a kernel with the `cli` driver on a configurable machine (sockets × clusters × cores × threads, per-core capacity), creates tasks and ticks the scheduler; a timeline of who ran on which CPU, and a table of each task's counters with nice, affinity, pause/wake and kill controls |
+| `site/index.html` | the front page: the playground, which boots a kernel with the `cli` driver on a configurable machine (sockets × clusters × cores × threads, per-core capacity), creates tasks and ticks the scheduler; a timeline of who ran on which CPU, and a table of each task's counters with nice, affinity, pause/wake and kill controls; live CPU/runqueue statistics below Cgroups and a folded Topology editor above the timeline |
 
 `KSTEP_DIR` is the kSTEP checkout; it defaults to `../..` (this repo as kSTEP's
 `docs/website` submodule) or `../kstep`. Everything else generated lives in `build/`.
@@ -63,3 +63,22 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
   then crashes at init because no CPU ever enters high-res tick mode.
 * **Speed.** About 8 to 14 s per run in Node on this host, versus about 1 s for
   native QEMU TCG; traces match native QEMU of the same version byte for byte.
+
+## CPU overview and configuration
+
+The CPUs section shows read-only `type: "cpu"` records emitted by the CLI driver's
+`top` command, one per isolated CPU before the final reply. The overview shows
+current task, `nr_running`, capacity, and fair-class PELT utilization (1024 is a
+full CPU; RT/DL utilization is excluded). The same table also shows fair load and
+runnable averages, root CFS minimum vruntime, and cumulative context switches.
+Older images show unavailable counters rather than inferred runqueue values;
+`check.mjs` requires these records before deployment.
+
+The Topology editor starts folded above the timeline. It is a draft: presets, dimensions, and per-core capacities do
+not affect the running session until Restart. Discard restores the running
+configuration. Layouts have at most eight experiment CPUs, plus CPU 0 for the
+driver. Restart stores the configuration in the URL and resets the experiment.
+
+The status bar above Topology shows startup progress, elapsed time, and the latest
+kernel console line. Once ready, the preview disappears. Expand Show logs for the
+kernel console and kSTEP trace; errors expand the logs automatically.
