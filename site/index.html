@@ -124,16 +124,16 @@
 
 
 <h2>Reproduced bugs</h2>
-<p>Each row is a real Linux CPU scheduler bug with a kSTEP driver that triggers it; the plot compares the trace of the buggy and the fixed kernel, and <b>run</b> boots that kernel in the browser.</p>
+<p>Each row is a real Linux CPU scheduler bug with a kSTEP driver that triggers it; the plot compares the trace of the buggy and the fixed kernel. <code>./reproduce.py &lt;bug&gt;</code> in the kSTEP repo builds both kernels and reruns the driver.</p>
 <div class="table-scroll" role="region" aria-label="Reproduced bugs" tabindex="0">
 <table id="bugs">
-  <thead><tr><th>Bug, driver, fix, and run</th><th>Buggy vs fixed</th></tr></thead>
+  <thead><tr><th>Bug, driver, and fix</th><th>Buggy vs fixed</th></tr></thead>
   <tbody></tbody>
 </table>
 </div>
 
 <h2>How kSTEP works</h2>
-<p>A driver program (kernel code, one per bug) declares a sequence of scheduler-invoking events: task creation, wakeups, sleeps, cgroup changes, ticks. The kSTEP module dispatches them on CPUs isolated from the rest of the system, with the scheduler clock and the tick under its control, so the unmodified scheduler runs the same code path it would in production and produces the same trace on every run. The reproduce page shows that output for each bug; the plot compares it for the buggy and the fixed kernel.</p>
+<p>A driver program (kernel code, one per bug) declares a sequence of scheduler-invoking events: task creation, wakeups, sleeps, cgroup changes, ticks. The kSTEP module dispatches them on CPUs isolated from the rest of the system, with the scheduler clock and the tick under its control, so the unmodified scheduler runs the same code path it would in production and produces the same trace on every run. The plot in each row compares that output for the buggy and the fixed kernel.</p>
 <figure><img src="figures/arch.svg" alt="kSTEP architecture"></figure>
 <ul>
   <li><b>Timing.</b> Logical time advances only when the driver ticks, so events can be placed inside transient windows a few microseconds wide.</li>
@@ -180,18 +180,15 @@ const setStatus = (s, bad = false, busy = false) => {
 };
 setStatus('Loading kernel…', false, true);
 
-// Links to the old front page (?bug=<name>&kernel=buggy|fixed) mean the reproducer.
-if (new URLSearchParams(location.search).has('bug')) location.replace('reproduce.html' + location.search);
-
-let V = '', play = null, bugs = [];
+let V = '', bugs = [];
 try {
   const response = await fetch('data.json', { cache: 'no-store' });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  ({ version: V, playground: play, bugs } = await response.json());
+  ({ version: V, bugs } = await response.json());
 }
 catch (e) { setStatus('data.json failed: ' + e.message, true); }
 
-// ---- reproduced bugs: a static catalog; runs happen on reproduce.html ----
+// ---- reproduced bugs: a static catalog ----
 {
   const link = (text, href) => { const a = document.createElement('a'); a.textContent = text; a.href = href; return a; };
   const tbody = $('bugs').querySelector('tbody');
@@ -200,12 +197,10 @@ catch (e) { setStatus('data.json failed: ' + e.message, true); }
   for (const b of bugs) {
     const tr = tbody.insertRow();
     const info = tr.insertCell();
-    const title = document.createElement('b'); title.textContent = b.title; info.append(line('', title));
+    const title = document.createElement('b'); title.textContent = b.name; info.append(line('', title));
     if (b.driver_url) info.append(line('Driver', link(b.name + '.c', b.driver_url)));
     if (b.fixes.length) info.append(line('Fix', ...b.fixes.flatMap((x, i) => i ? [', ', link(x.label, x.url)] : [link(x.label, x.url)])));
-    const runs = ['buggy', 'fixed'].filter(v => b.images[v]).map(v => link(v, `reproduce.html?bug=${b.name}&kernel=${v}`));
-    if (runs.length) info.append(line('Run in browser', ...runs.flatMap((a, i) => i ? [', ', a] : [a])));
-    const pl = tr.insertCell(); if (b.plot) { const img = document.createElement('img'); img.src = b.plot; img.alt = `${b.title}: buggy vs fixed`; img.loading = 'lazy'; img.onerror = () => img.remove(); pl.append(img); }
+    const pl = tr.insertCell(); if (b.plot) { const img = document.createElement('img'); img.src = b.plot; img.alt = `${b.name}: buggy vs fixed`; img.loading = 'lazy'; img.onerror = () => img.remove(); pl.append(img); }
   }
 }
 const { BIOS, runKstep } = await import(`./kstep.mjs?v=${V}`);
@@ -652,13 +647,13 @@ async function boot() {
     setStatus('Downloading kernel…', false, true);
     const get = (u) => fetch(u).then(r => { if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`); return r.arrayBuffer(); });
     const [kernel, rootfs, { default: Module }, ...bios] = await Promise.all([
-      get(`${play.base}/${play.image}/kernel?v=${V}`), get(`${play.base}/${play.image}/rootfs.cpio?v=${V}`),   // ?v busts the browser cache after a restage
+      get(`images/cli/kernel?v=${V}`), get(`images/cli/rootfs.cpio?v=${V}`),   // ?v busts the browser cache after a restage
       import(`./qemu/qemu-system-x86_64.js?v=${V}`), ...BIOS.map(f => get(`qemu/${f}?v=${V}`)),
     ]);
     setStatus('Booting kernel…', false, true);
     const r = await runKstep(Module, {
       files: { kernel, rootfs, bios: Object.fromEntries(BIOS.map((f, i) => [f, bios[i]])) },
-      driver: 'cli', smp: ncpus + 1, mem: play.mem_mb, cli: true, params: cpuParams(machine),
+      driver: 'cli', smp: ncpus + 1, mem: 128, cli: true, params: cpuParams(machine),
       locateFile: (f) => `qemu/${f}?v=${V}`,
       onLine: (ch, line) => {
         if (ch === 'console') {
@@ -705,8 +700,8 @@ async function boot() {
 }
 // coi-serviceworker reloads the page once on the first visit to get SharedArrayBuffer; boot
 // only on the isolated page. Hard reloads bypass service workers, hence the fallback message.
-if (play && crossOriginIsolated) boot();
-else if (play) { setStatus('Preparing browser for kernel startup…', false, true);
+if (V && crossOriginIsolated) boot();
+else if (V) { setStatus('Preparing browser for kernel startup…', false, true);
   setTimeout(() => setStatus('This page needs SharedArrayBuffer, which the service worker provides. Do a normal reload (hard reloads bypass it); private browsing may block it entirely.', true), 3000); }
 draw();
 </script>

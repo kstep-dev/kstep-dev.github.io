@@ -9,7 +9,7 @@ W=$(cd "$(dirname "$0")" && pwd)
 
 # Refuse to publish a page whose playground image does not speak its protocol.
 NODE=$(ls "$W"/build/emsdk/node/*/bin/node 2>/dev/null | head -1 || command -v node)
-"$NODE" --wasm-lazy-compilation "$W/check.mjs" "$W/site/data.json" || { echo "deploy aborted: rebuild the playground image from the current kmod and user.c"; exit 1; }
+"$NODE" --wasm-lazy-compilation "$W/check.mjs" || { echo "deploy aborted: rebuild the playground image from the current kmod and user.c"; exit 1; }
 
 version=$(python3 -c "import json;print(json.load(open('$W/site/data.json'))['version'])")
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Serve site/ locally, exactly as deployed (bug images from GitHub, the playground image from
+# Serve site/ locally, exactly as deployed (the playground image from
 # the kSTEP build dir; PLAYGROUND_LOCAL=<dir> overrides where it is taken from).
 #   ./serve.sh [port]
 set -euo pipefail

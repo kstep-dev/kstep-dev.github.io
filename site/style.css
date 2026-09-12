@@ -1,4 +1,4 @@
-/* Shared by index.html (playground) and reproduce.html. */
+/* index.html (playground). */
 [hidden] { display: none !important; }
 :root { color-scheme: light dark; }
 body { margin: 0 auto; padding: 0 1rem 3rem; max-width: 60rem; font: 15px/1.5 system-ui, sans-serif; }
