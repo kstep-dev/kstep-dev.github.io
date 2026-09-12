@@ -37,14 +37,15 @@ for b in reproduce.BUGS + getattr(reproduce, "BUGS_EXTRA", []):
 print(json.dumps({"version": version, "bugs": bugs}, indent=1))
 PY
 ) > "$W/site/data.json"
-# Playground image: kSTEP's `cli` build, Linux $PLAYGROUND_LINUX for x86_64 (the wasm QEMU's only
-# target), built here from the current kmod and user.c so the page and the driver it talks to
-# are always published together. The kernel is built once (checkout.py + make.py, ~10 min);
-# PLAYGROUND_LOCAL=<build dir> uses another x86_64 build instead.
+# Playground image: kSTEP's build of Linux $PLAYGROUND_LINUX for x86_64 (the wasm QEMU's only
+# target), the same build/<version> directory the repro scripts use, built here from the current
+# kmod and user.c so the page and the driver it talks to are always published together. The
+# kernel is built once (checkout.py + make.py, ~10 min); PLAYGROUND_LOCAL=<build dir> uses
+# another x86_64 build instead.
 PLAYGROUND_LINUX=v6.18
-CLI=${PLAYGROUND_LOCAL:-$KSTEP_DIR/build/cli}
+CLI=${PLAYGROUND_LOCAL:-$KSTEP_DIR/build/$PLAYGROUND_LINUX}
 if [ -z "${PLAYGROUND_LOCAL:-}" ] && [ ! -d "$CLI/linux" ]; then
-  (cd "$KSTEP_DIR" && ./checkout.py "$PLAYGROUND_LINUX" cli --no-current)
+  (cd "$KSTEP_DIR" && ./checkout.py "$PLAYGROUND_LINUX" "$PLAYGROUND_LINUX" --no-current)
 fi
 "$KSTEP_DIR/make.py" --build "$(basename "$(readlink -f "$CLI")")" --arch x86_64
 [ "$(cat "$CLI/arch" 2>/dev/null)" = x86_64 ] || { echo "playground image at $CLI is not x86_64 (the wasm QEMU is x86_64 only)"; exit 1; }

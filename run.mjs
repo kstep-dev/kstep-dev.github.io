@@ -2,7 +2,7 @@
 // Run a kSTEP image headless under Node (>= 20), the way the web pages do (see site/kstep.mjs).
 //
 //   ./run.mjs --build sync_wakeup_buggy [--driver sync_wakeup] [--smp 3] [--mem 512] [--out dir] [--quiet]
-//   ./run.mjs --build cli [--smp 3] [--tasks 3] [--ticks 30]     # the playground's driver: round-robin demo
+//   ./run.mjs --build v6.18 --driver cli [--smp 3] [--tasks 3] [--ticks 30]   # the playground's driver: round-robin demo
 //   ./run.mjs --build v6.18 --driver cli --bench 10             # per-command latency: ticks, then tops, 10 s each
 //   (no system node? emsdk ships one: build/emsdk/node/*/bin/node run.mjs ...)
 //

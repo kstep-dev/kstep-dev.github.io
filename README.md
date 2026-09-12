@@ -17,7 +17,7 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 | `site/` | the published site. Tracked: `index.html` (playground + bug catalog + paper), `style.css`, `kstep.mjs`, `figures/`, `assets/` (paper PDF), `coi-serviceworker.min.js`. Generated, gitignored: `qemu/` (from `setup.sh`), `data.json` and `images/cli/` (from `build.sh`) |
 | `site/kstep.mjs` | shared by the page and `run.mjs`: QEMU arguments, image loading, output plumbing, completion detection |
 | `setup.sh` | one-time: `setup` (apt, emsdk, meson), `deps` (zlib, libffi, pixman, glib for wasm64), `qemu` (x86_64-softmmu into `site/qemu/`) |
-| `build.sh` | builds the site: writes `site/data.json` (the bug table from kSTEP's `reproduce.py` and README, version stamp) and builds and copies the playground image (kSTEP's `build/cli`: Linux v6.18 for x86_64 with the current kmod and user.c, created on first run; `PLAYGROUND_LOCAL=<build dir>` overrides) into `site/images/` |
+| `build.sh` | builds the site: writes `site/data.json` (the bug table from kSTEP's `reproduce.py` and README, version stamp) and builds and copies the playground image (kSTEP's `build/v6.18`: Linux v6.18 for x86_64 with the current kmod and user.c, created on first run, shared with the repro scripts; `PLAYGROUND_LOCAL=<build dir>` overrides) into `site/images/` |
 | `deploy.sh` | `build.sh`, then `check.mjs` as a gate, then force-pushes `site/` as the orphan `gh-pages` branch |
 | `serve.sh` | `build.sh`, then serves `site/` locally with `python3 -m http.server` |
 | `check.mjs` | boots the playground image the site points at and checks it answers every verb the page uses; `deploy.sh` runs it before publishing |
@@ -32,7 +32,7 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 ```sh
 ./setup.sh                            # first time ~15 min; ./setup.sh qemu rebuilds QEMU only
 ./run.mjs --build sync_wakeup_buggy   # console -> stdout, results -> results/<build>-<driver>/
-./serve.sh 8080                       # http://localhost:8080/ ; builds the playground image (kSTEP's build/cli, Linux v6.18) first
+./serve.sh 8080                       # http://localhost:8080/ ; builds the playground image (kSTEP's build/v6.18) first
 ./deploy.sh                           # https://kstep-dev.github.io/
 ```
 
