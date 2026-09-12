@@ -9,8 +9,8 @@
 # serve.sh serves the result; deploy.sh checks it and publishes it.
 set -euo pipefail
 W=$(cd "$(dirname "$0")" && pwd)
-# kSTEP checkout: ../.. when this repo is kSTEP's docs/website submodule, else a sibling ../kstep.
-KSTEP_DIR=${KSTEP_DIR:-$([ -f "$W/../../run.py" ] && echo "$W/../.." || echo "$W/../kstep")}
+# kSTEP checkout: .. when this repo is kSTEP's website submodule, else a sibling ../kstep.
+KSTEP_DIR=${KSTEP_DIR:-$([ -f "$W/../run.py" ] && echo "$W/.." || echo "$W/../kstep")}
 [ -f "$W/site/qemu/qemu-system-x86_64.wasm" ] || { echo "no wasm build; run ./setup.sh"; exit 1; }
 
 # data.json: cache-busting version, image base URL, and the bug catalog: reproduce.py's Bug

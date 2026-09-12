@@ -6,7 +6,7 @@
 //   (no system node? emsdk ships one: build/emsdk/node/*/bin/node run.mjs ...)
 //
 // Reads $KSTEP_DIR/build/<kernel>/{kernel,rootfs.cpio} (KSTEP_DIR defaults to ../.. as kSTEP's
-// docs/website submodule, else ../kstep) and the QEMU build from site/qemu/. Console -> stdout,
+// website submodule, else ../kstep) and the QEMU build from site/qemu/. Console -> stdout,
 // status -> stderr, results -> --out (default results/<kernel>-<driver>/).
 // --driver defaults to the kernel name minus _buggy/_fixed; --smp/--mem to reproduce.py's
 // values when site/data.json exists, else 2 / 128. With the `cli` driver the run is interactive:
@@ -26,7 +26,7 @@ try {  // defaults from site/data.json (build.sh), i.e. reproduce.py's values fo
 } catch {}
 const driver = args.driver ?? defaults.driver, smp = Number(args.smp ?? defaults.num_cpus), mem = Number(args.mem ?? defaults.mem_mb);
 const outDir = args.out ?? path.join(W, 'results', `${kernel}-${driver}`);
-const kstep = process.env.KSTEP_DIR ?? (fs.existsSync(path.join(W, '..', '..', 'run.py')) ? path.join(W, '..', '..') : path.join(W, '..', 'kstep'));
+const kstep = process.env.KSTEP_DIR ?? (fs.existsSync(path.join(W, '..', 'run.py')) ? path.join(W, '..') : path.join(W, '..', 'kstep'));
 const kdir = path.join(kstep, 'build', kernel), qdir = path.join(W, 'site', 'qemu');
 const t0 = Date.now(), elapsed = () => ((Date.now() - t0) / 1000).toFixed(1);
 

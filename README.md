@@ -25,15 +25,15 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 | `run.mjs` | the same run, headless under Node (>= 20): for timing and for comparing traces against native QEMU; with `--kernel cli` it drives the playground's driver (round-robin demo) |
 | `site/index.html` | the front page: the playground, which boots a kernel with the `cli` driver on a configurable machine (sockets × clusters × cores × threads, per-core capacity), creates tasks and ticks the scheduler; a timeline of who ran on which CPU, and a table of each task's counters with nice, affinity, pause/wake and kill controls; live CPU/runqueue statistics below Cgroups and a folded Topology editor above the timeline |
 
-`KSTEP_DIR` is the kSTEP checkout; it defaults to `../..` (this repo as kSTEP's
-`docs/website` submodule) or `../kstep`. Everything else generated lives in `build/`.
+`KSTEP_DIR` is the kSTEP checkout; it defaults to `..` (this repo as kSTEP's
+`website` submodule) or `../kstep`. Everything else generated lives in `build/`.
 
 ## Usage
 
 ```sh
 ./setup.sh                            # first time ~15 min; ./setup.sh qemu rebuilds QEMU only
 ./run.mjs --kernel sync_wakeup_buggy  # console -> stdout, results -> results/<image>-<driver>/
-./serve.sh 8080                       # http://localhost:8080/ ; the playground image is taken from ../../build/cli (or PLAYGROUND_LOCAL=<dir>)
+./serve.sh 8080                       # http://localhost:8080/ ; the playground image is taken from ../build/cli (or PLAYGROUND_LOCAL=<dir>)
 ./deploy.sh                           # https://kstep-dev.github.io/
 ```
 
