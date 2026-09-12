@@ -37,9 +37,16 @@ for b in reproduce.BUGS + getattr(reproduce, "BUGS_EXTRA", []):
 print(json.dumps({"version": version, "bugs": bugs}, indent=1))
 PY
 ) > "$W/site/data.json"
-# Playground image: a plain x86 kernel whose kmod has the `cli` driver. It ships with the site
-# (site/images/cli) so the page and the driver it talks to are always published together.
-CLI=${PLAYGROUND_LOCAL:-$KSTEP_DIR/build/cli}   # kernel + rootfs.cpio built from the current kmod and user.c
-[ -f "$CLI/kernel" ] && [ -f "$CLI/rootfs.cpio" ] || { echo "no playground image at $CLI (expected kernel + rootfs.cpio; PLAYGROUND_LOCAL=<dir> overrides)"; exit 1; }
+# Playground image: kSTEP's `cli` build, Linux $PLAYGROUND_LINUX for x86_64 (the wasm QEMU's only
+# target), built here from the current kmod and user.c so the page and the driver it talks to
+# are always published together. The kernel is built once (checkout.py + make.py, ~10 min);
+# PLAYGROUND_LOCAL=<build dir> uses another x86_64 build instead.
+PLAYGROUND_LINUX=v6.18
+CLI=${PLAYGROUND_LOCAL:-$KSTEP_DIR/build/cli}
+if [ -z "${PLAYGROUND_LOCAL:-}" ] && [ ! -d "$CLI/linux" ]; then
+  (cd "$KSTEP_DIR" && ./checkout.py "$PLAYGROUND_LINUX" cli --no-current)
+fi
+"$KSTEP_DIR/make.py" --build "$(basename "$(readlink -f "$CLI")")" --arch x86_64
+[ "$(cat "$CLI/arch" 2>/dev/null)" = x86_64 ] || { echo "playground image at $CLI is not x86_64 (the wasm QEMU is x86_64 only)"; exit 1; }
 mkdir -p "$W/site/images/cli" && cp "$CLI/kernel" "$CLI/rootfs.cpio" "$W/site/images/cli/"
 echo "site/: $(du -sh "$W/site" | cut -f1); $(python3 -c "import json;print(len(json.load(open('$W/site/data.json'))['bugs']))") bugs"

@@ -3,6 +3,7 @@
 //
 //   ./run.mjs --build sync_wakeup_buggy [--driver sync_wakeup] [--smp 3] [--mem 512] [--out dir] [--quiet]
 //   ./run.mjs --build cli [--smp 3] [--tasks 3] [--ticks 30]     # the playground's driver: round-robin demo
+//   ./run.mjs --build v6.18 --driver cli --bench 10             # per-command latency: ticks, then tops, 10 s each
 //   (no system node? emsdk ships one: build/emsdk/node/*/bin/node run.mjs ...)
 //
 // Reads $KSTEP_DIR/build/<build>/{kernel,rootfs.cpio} (KSTEP_DIR defaults to .. as kSTEP's
@@ -55,6 +56,16 @@ if (cli) {   // drive the interactive driver: the round-robin demo
   console.error(`[${elapsed()}s] ready`, JSON.stringify(await cmd(null)));
   const pids = [];
   for (let i = 0; i < tasks; i++) pids.push((await cmd('create')).task);
+  if ('bench' in args) {   // how many commands the guest answers per second, one verb at a time
+    const seconds = Number(args.bench || 10);
+    for (const verb of ['tick', 'top']) {
+      const t = performance.now(); let n = 0;
+      while (performance.now() - t < seconds * 1000) { await cmd(verb); n++; }
+      const ms = (performance.now() - t) / n;
+      console.log(`${verb.padEnd(5)} ${n} in ${seconds}s: ${ms.toFixed(2)} ms/cmd, ${(1000 / ms).toFixed(0)}/s (tasks=${tasks}, smp=${smp})`);
+    }
+    await cmd('exit');
+  } else {
   const timeline = [];
   let records = [];
   waiters.records = (o) => records.push(o);
@@ -68,6 +79,7 @@ if (cli) {   // drive the interactive driver: the round-robin demo
   records = []; await cmd('top');
   for (const s of records) console.log(`task ${s.task}: ${s.state} cpu=${s.cpu} runtime=${(s.sum_exec_runtime / 1e6).toFixed(1)}ms vruntime=${(s.vruntime / 1e6).toFixed(1)}ms`);
   await cmd('exit');
+  }
 }
 const { panic } = await done;
 fs.mkdirSync(outDir, { recursive: true });

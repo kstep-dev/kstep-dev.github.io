@@ -1,6 +1,6 @@
 #!/bin/bash
-# Serve site/ locally, exactly as deployed (the playground image from
-# the kSTEP build dir; PLAYGROUND_LOCAL=<dir> overrides where it is taken from).
+# Serve site/ locally, exactly as deployed (the playground image is kSTEP's build/cli, built by
+# build.sh; PLAYGROUND_LOCAL=<build dir> overrides).
 #   ./serve.sh [port]
 set -euo pipefail
 W=$(cd "$(dirname "$0")" && pwd)

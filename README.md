@@ -17,11 +17,11 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 | `site/` | the published site. Tracked: `index.html` (playground + bug catalog + paper), `style.css`, `kstep.mjs`, `figures/`, `assets/` (paper PDF), `coi-serviceworker.min.js`. Generated, gitignored: `qemu/` (from `setup.sh`), `data.json` and `images/cli/` (from `build.sh`) |
 | `site/kstep.mjs` | shared by the page and `run.mjs`: QEMU arguments, image loading, output plumbing, completion detection |
 | `setup.sh` | one-time: `setup` (apt, emsdk, meson), `deps` (zlib, libffi, pixman, glib for wasm64), `qemu` (x86_64-softmmu into `site/qemu/`) |
-| `build.sh` | builds the site: writes `site/data.json` (the bug table from kSTEP's `reproduce.py` and README, version stamp) and copies the playground image (`build/cli` of the kSTEP checkout: kernel + rootfs.cpio with the `cli` driver) into `site/images/` |
+| `build.sh` | builds the site: writes `site/data.json` (the bug table from kSTEP's `reproduce.py` and README, version stamp) and builds and copies the playground image (kSTEP's `build/cli`: Linux v6.18 for x86_64 with the current kmod and user.c, created on first run; `PLAYGROUND_LOCAL=<build dir>` overrides) into `site/images/` |
 | `deploy.sh` | `build.sh`, then `check.mjs` as a gate, then force-pushes `site/` as the orphan `gh-pages` branch |
 | `serve.sh` | `build.sh`, then serves `site/` locally with `python3 -m http.server` |
 | `check.mjs` | boots the playground image the site points at and checks it answers every verb the page uses; `deploy.sh` runs it before publishing |
-| `run.mjs` | the same run, headless under Node (>= 20): for timing and for comparing traces against native QEMU; with `--build cli` it drives the playground's driver (round-robin demo) |
+| `run.mjs` | the same run, headless under Node (>= 20): for timing and for comparing traces against native QEMU; with `--build cli` it drives the playground's driver (round-robin demo), and `--bench <s>` measures `tick` and `top` latency |
 | `site/index.html` | the front page: the playground, which boots a kernel with the `cli` driver on a configurable machine (sockets × clusters × cores × threads, per-core capacity), creates tasks and ticks the scheduler; a timeline of who ran on which CPU, and a table of each task's counters with nice, affinity, pause/wake and kill controls; live CPU/runqueue statistics below Cgroups and a folded Topology editor above the timeline |
 
 `KSTEP_DIR` is the kSTEP checkout; it defaults to `..` (this repo as kSTEP's
@@ -32,7 +32,7 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 ```sh
 ./setup.sh                            # first time ~15 min; ./setup.sh qemu rebuilds QEMU only
 ./run.mjs --build sync_wakeup_buggy   # console -> stdout, results -> results/<build>-<driver>/
-./serve.sh 8080                       # http://localhost:8080/ ; the playground image is taken from ../build/cli (or PLAYGROUND_LOCAL=<dir>)
+./serve.sh 8080                       # http://localhost:8080/ ; builds the playground image (kSTEP's build/cli, Linux v6.18) first
 ./deploy.sh                           # https://kstep-dev.github.io/
 ```
 
