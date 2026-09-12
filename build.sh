@@ -49,5 +49,8 @@ if [ -z "${PLAYGROUND_LOCAL:-}" ] && [ ! -d "$CLI/linux" ]; then
 fi
 "$KSTEP_DIR/make.py" --build "$(basename "$(readlink -f "$CLI")")" --arch x86_64
 [ "$(cat "$CLI/arch" 2>/dev/null)" = x86_64 ] || { echo "playground image at $CLI is not x86_64 (the wasm QEMU is x86_64 only)"; exit 1; }
-mkdir -p "$W/site/images/cli" && cp "$CLI/kernel" "$CLI/rootfs.cpio" "$W/site/images/cli/"
+# The kernel is the uncompressed vmlinux, stripped (PVH boot: no in-guest decompression); GitHub
+# Pages gzips it to about the bzImage's size.
+mkdir -p "$W/site/images/cli" && cp "$CLI/rootfs.cpio" "$W/site/images/cli/"
+x86_64-linux-gnu-strip -o "$W/site/images/cli/kernel" "$CLI/kernel" 2>/dev/null || cp "$CLI/kernel" "$W/site/images/cli/kernel"
 echo "site/: $(du -sh "$W/site" | cut -f1); $(python3 -c "import json;print(len(json.load(open('$W/site/data.json'))['bugs']))") bugs"

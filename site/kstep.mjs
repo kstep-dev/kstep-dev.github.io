@@ -14,7 +14,7 @@
 // 2). QEMU does not exit on guest reboot under Emscripten, so `done` resolves when the
 // console shows the reboot or a kernel panic.
 
-export const BIOS = ['bios-256k.bin', 'linuxboot_dma.bin', 'kvmvapic.bin'];
+export const BIOS = ['bios-256k.bin', 'kvmvapic.bin', 'pvh.bin'];   // pvh.bin: the option ROM that enters a PVH vmlinux
 
 // kSTEP's run.py arguments for x86_64, plus tsc_early_khz: QEMU on a wasm host derives the
 // guest TSC from the JS clock (1 GHz, but only as fine as performance.now(), 1 ms in Safari),
