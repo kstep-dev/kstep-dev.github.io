@@ -653,7 +653,7 @@ async function boot() {
     setStatus('Booting kernel…', false, true);
     const r = await runKstep(Module, {
       files: { kernel, rootfs, bios: Object.fromEntries(BIOS.map((f, i) => [f, bios[i]])) },
-      driver: 'cli', smp: ncpus + 1, mem: 128, cli: true, params: cpuParams(machine),
+      driver: 'cli', smp: ncpus + 1, mem: 64, cli: true, params: cpuParams(machine),
       locateFile: (f) => `qemu/${f}?v=${V}`,
       onLine: (ch, line) => {
         if (ch === 'console') {
