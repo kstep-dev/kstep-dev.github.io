@@ -6,7 +6,7 @@
 //
 // files: { kernel, rootfs, bios: { 'bios-256k.bin': ..., } } as Uint8Array / ArrayBuffer.
 // wasmBinary (optional): the .wasm bytes, if the caller fetched them itself (e.g. to show progress).
-// cli (optional): if true, the JSON port (/dev/ttyS1 in the guest) is also readable by the
+// cli (optional): if true, the JSON port (/dev/hvc0 in the guest) is also readable by the
 // guest: `send(line)` on the returned object queues a command line for kSTEP's `cli` driver,
 // whose replies come back among the 'jsonl' lines (they have an "ok" field, events a "type").
 // onLine(channel, line) is called for every complete line, channel 'console' (kernel
@@ -35,12 +35,14 @@ export function qemuArgs({ driver, smp, mem, cli = false, params }) {
     '-kernel', '/kernel', '-initrd', '/rootfs.cpio', '-append', bootArgs({ driver, smp, params }),
     '-nographic', '-nodefaults', '-no-reboot',
     // /dev/kstep0..2 are Emscripten device nodes whose write callbacks push bytes to us
-    // (ttyS0 console, ttyS1 JSON, ttyS2 coverage). The cli driver also reads commands from
-    // ttyS1, so that one becomes a pipe chardev (opened read-write) on a device whose poll
-    // op tells QEMU when a command is waiting.
+    // (ttyS0 console; hvc0 JSON and hvc1 coverage over virtio console ports, one virtqueue
+    // kick per write where the 16550 cost one port I/O exit per byte). The cli driver also
+    // reads commands from hvc0, so that one becomes a pipe chardev (opened read-write) on a
+    // device whose poll op tells QEMU when a command is waiting.
     '-chardev', 'file,id=c0,path=/dev/kstep0', '-serial', 'chardev:c0',
-    '-chardev', `${cli ? 'pipe' : 'file'},id=c1,path=/dev/kstep1`, '-serial', 'chardev:c1',
-    '-chardev', 'file,id=c2,path=/dev/kstep2', '-serial', 'chardev:c2',
+    '-device', 'virtio-serial-pci,id=vs0',
+    '-chardev', `${cli ? 'pipe' : 'file'},id=c1,path=/dev/kstep1`, '-device', 'virtconsole,bus=vs0.0,nr=0,chardev=c1',
+    '-chardev', 'file,id=c2,path=/dev/kstep2', '-device', 'virtconsole,bus=vs0.0,nr=1,chardev=c2',
   ];
 }
 
@@ -49,7 +51,7 @@ export async function runKstep(Module, { files, driver, smp, mem, onLine, locate
   const done = new Promise(r => { resolveDone = r; });
   const channels = { 0: 'console', 1: 'jsonl', 2: 'cov' };
   const lines = { console: '', jsonl: '', cov: '' };
-  const inq = [];   // bytes queued for the guest's ttyS1 (cli commands)
+  const inq = [];   // bytes queued for the guest's hvc0 (cli commands)
   const send = (line) => { for (const b of new TextEncoder().encode(line + '\n')) inq.push(b); };
   const sink = (i) => (byte) => {
     const ch = channels[i];
@@ -70,7 +72,7 @@ export async function runKstep(Module, { files, driver, smp, mem, onLine, locate
       m.FS.writeFile('/rootfs.cpio', new Uint8Array(files.rootfs));
       for (let i = 0; i < 3; i++) if (i !== 1 || !cli) m.FS.createDevice('/dev', `kstep${i}`, null, sink(i));
       if (cli) {
-        // Bidirectional device for ttyS1. FS ops run on the main thread (QEMU's thread is
+        // Bidirectional device for hvc0. FS ops run on the main thread (QEMU's thread is
         // proxied to it), so the queue is plain JS state.
         const out = sink(1), dev = m.FS.makedev(64, 1);
         m.FS.registerDevice(dev, {
