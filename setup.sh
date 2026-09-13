@@ -1,10 +1,10 @@
 #!/bin/bash
-# One-time setup: build qemu-system-x86_64 for a wasm64 host, end to end.
+# One-time setup: build qemu-system-aarch64 for a wasm64 host, end to end.
 #   ./setup.sh            # all stages
 #   ./setup.sh qemu       # just reconfigure+rebuild QEMU
 # Stages: setup (apt, emsdk, meson) -> deps (zlib, libffi, pixman, glib) -> qemu.
-# Output: site/qemu/ (qemu-system-x86_64.{js,wasm} + SeaBIOS blobs), served/deployed as-is.
-# Needed once per checkout; build.sh assembles the site around what this leaves behind.
+# Output: site/qemu/ (qemu-system-aarch64.{js,wasm}; the virt machine needs no firmware), served/deployed as-is.
+# Needed once per checkout; build.py assembles the site around what this leaves behind.
 set -euo pipefail
 W=$(cd "$(dirname "$0")" && pwd)
 stage=${1:-all}
@@ -98,15 +98,21 @@ qemu() {
   # interpreter (1500 upstream). kSTEP runs are short, so most time goes to interpreting boot
   # code: 300 cut a run from 7.2 s to 6.0 s here (50: 5.6 s, but many more wasm modules).
   sed -i 's/^#define INSTANTIATE_NUM .*/#define INSTANTIATE_NUM 300/' "$src/tcg/wasm64.c"
+  # Only the virt machine and the virtio console, not the ~360 devices of the default arm64
+  # build: --without-default-devices drops everything the machine does not select. virt's ACPI
+  # code links against hw/cxl, which upstream only enables by default, so name it explicitly,
+  # with PXB (it depends on it), its memory device (it links against it) and PCIE_PORT (the
+  # parent QOM type of its root port).
+  printf 'CONFIG_ARM_VIRT=y\nCONFIG_VIRTIO_SERIAL=y\nCONFIG_PXB=y\nCONFIG_CXL=y\nCONFIG_CXL_MEM_DEVICE=y\nCONFIG_PCIE_PORT=y\n' > "$src/configs/devices/aarch64-softmmu/kstep.mak"
   mkdir -p "$src/build" && cd "$src/build"
   emconfigure ../configure --static --cpu=wasm64 --enable-wasm64-32bit-address-limit --cross-prefix= \
-    --target-list=x86_64-softmmu \
+    --target-list=aarch64-softmmu --without-default-devices --with-devices-aarch64=kstep \
     --enable-system --disable-user --disable-tools --disable-docs \
     --without-default-features --with-coroutine=wasm \
     --extra-cflags="-O3 -g0 -matomics -mbulk-memory -DNDEBUG -sASYNCIFY=1 -pthread -sPROXY_TO_PTHREAD=1 -sFORCE_FILESYSTEM -sWASM_BIGINT -sMALLOC=mimalloc"
   emmake make -j"$(nproc)"
   mkdir -p "$W/site/qemu"
-  cp qemu-system-x86_64.js qemu-system-x86_64.wasm ../pc-bios/bios-256k.bin ../pc-bios/kvmvapic.bin ../pc-bios/pvh.bin "$W/site/qemu/"
+  rm -f "$W/site/qemu"/* && cp qemu-system-aarch64.js qemu-system-aarch64.wasm "$W/site/qemu/"
   ls -la "$W/site/qemu"
 }
 

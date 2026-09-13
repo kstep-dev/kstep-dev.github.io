@@ -203,7 +203,7 @@ catch (e) { setStatus('data.json failed: ' + e.message, true); }
     const pl = tr.insertCell(); if (b.plot) { const img = document.createElement('img'); img.src = b.plot; img.alt = `${b.name}: buggy vs fixed`; img.loading = 'lazy'; img.onerror = () => img.remove(); pl.append(img); }
   }
 }
-const { BIOS, runKstep } = await import(`./kstep.mjs?v=${V}`);
+const { runKstep } = await import(`./kstep.mjs?v=${V}`);
 
 // ---- session state ----
 const tasks = [];            // [{id, stat, alive}] in creation order; the driver names tasks 1, 2, .. by creation
@@ -526,17 +526,19 @@ function renderGroups() {
   }
 }
 
-// ---- transport: one command in flight at a time, replies in order ----
-let send = null; const waiters = [];
+// ---- transport: kstep.mjs's cmd(), one command in flight at a time, with a transcript ----
+let vm = null;
 const LOG_MAX = 2000;   // lines kept in the transcript
 const append = (text, cls) => {
   const span = document.createElement('span'); if (cls) span.className = cls; span.textContent = text + '\n'; log.append(span);
   if (log.childElementCount > LOG_MAX) log.firstElementChild.remove();
   log.scrollTop = log.scrollHeight;
 };
-function cmd(line) {
-  return new Promise(resolve => { waiters.push(resolve); if (line !== null) { append('> ' + line); send(line); } })
-    .then(reply => { append(JSON.stringify(reply), reply.error ? 'err' : ''); return reply; });
+async function cmd(line) {
+  if (line !== null) append('> ' + line);
+  const reply = await vm.cmd(line);
+  append(JSON.stringify(reply), reply.error ? 'err' : '');
+  return reply;
 }
 // `top` answers one {"type":"task",...} record per live task and then its reply. Records are
 // shown the moment they arrive (applyTask); a task of ours the snapshot never mentioned has
@@ -572,7 +574,7 @@ let timer = 0;
 function schedule() {
   clearTimeout(timer); timer = 0;
   const rate = +$('speed').value || 0;
-  if (send && rate > 0) timer = setTimeout(() => enqueue(step).then(schedule), 1000 / rate);
+  if (vm && rate > 0) timer = setTimeout(() => enqueue(step).then(schedule), 1000 / rate);
 }
 $('speed').onchange = schedule;
 $('step').onclick = () => { $('speed').value = 0; schedule(); enqueue(() => step(true)); };
@@ -646,39 +648,32 @@ async function boot() {
   try {
     setStatus('Downloading kernel…', false, true);
     const get = (u) => fetch(u).then(r => { if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`); return r.arrayBuffer(); });
-    const [kernel, rootfs, { default: Module }, ...bios] = await Promise.all([
+    const [kernel, rootfs, { default: Module }] = await Promise.all([
       get(`images/cli/kernel?v=${V}`), get(`images/cli/rootfs.cpio?v=${V}`),   // ?v busts the browser cache after a restage
-      import(`./qemu/qemu-system-x86_64.js?v=${V}`), ...BIOS.map(f => get(`qemu/${f}?v=${V}`)),
+      import(`./qemu/qemu-system-aarch64.js?v=${V}`),
     ]);
     setStatus('Booting kernel…', false, true);
-    const r = await runKstep(Module, {
-      files: { kernel, rootfs, bios: Object.fromEntries(BIOS.map((f, i) => [f, bios[i]])) },
-      driver: 'cli', smp: ncpus + 1, mem: 64, cli: true, params: cpuParams(machine),
+    vm = await runKstep(Module, {
+      files: { kernel, rootfs },
+      smp: ncpus + 1, mem: 64, params: cpuParams(machine),
       locateFile: (f) => `qemu/${f}?v=${V}`,
-      onLine: (ch, line) => {
-        if (ch === 'console') {
-          const atBottom = con.scrollHeight - con.scrollTop - con.clientHeight < 40;
-          con.append(line + '\n'); if (atBottom) con.scrollTop = con.scrollHeight;
-          if (startup && line.trim()) { $('boot-preview').textContent = line; $('boot-preview').hidden = false; }
-          if (line.includes('Kernel panic')) { setStatus('Kernel panic', true); $('speed').value = 0; schedule(); }
-        }
-        else if (ch === 'jsonl') {
-          // one ordered stream: command replies interleaved with trace events ("type"); a failed
-          // command replies with "error"
-          const o = JSON.parse(line);
-          if (!('type' in o)) waiters.shift()?.(o);   // a reply (events carry "type")
-          else if (o.type === 'cpu') { cpuRecords.set(o.cpu, o); append(line); }
-          else if (o.type === 'task') { append(line); applyTask(o); }   // a record: shown right away
-          else if (o.type === 'load_balance' || o.type === 'migrate') {
-            append(line, 'event');
-            // the kernel's logical timestamp is the tick the event happened in (tick N -> column N-1);
-            // arrival order is not reliable, the balancer's lines can trail the tick reply
-            balances.push({ tick: Math.max(0, o.timestamp - 1), cpu: o.dst_cpu, pid: o.type === 'migrate' ? o.task : 0, src: o.src_cpu, domain: o.name });
-          }
+      onConsole: (line) => {
+        const atBottom = con.scrollHeight - con.scrollTop - con.clientHeight < 40;
+        con.append(line + '\n'); if (atBottom) con.scrollTop = con.scrollHeight;
+        if (startup && line.trim()) { $('boot-preview').textContent = line; $('boot-preview').hidden = false; }
+        if (line.includes('Kernel panic')) { setStatus('Kernel panic', true); $('speed').value = 0; schedule(); }
+      },
+      onEvent: (o, line) => {   // records and trace events; command replies resolve cmd()
+        if (o.type === 'cpu') { cpuRecords.set(o.cpu, o); append(line); }
+        else if (o.type === 'task') { append(line); applyTask(o); }   // a record: shown right away
+        else if (o.type === 'load_balance' || o.type === 'migrate') {
+          append(line, 'event');
+          // the kernel's logical timestamp is the tick the event happened in (tick N -> column N-1);
+          // arrival order is not reliable, the balancer's lines can trail the tick reply
+          balances.push({ tick: Math.max(0, o.timestamp - 1), cpu: o.dst_cpu, pid: o.type === 'migrate' ? o.task : 0, src: o.src_cpu, domain: o.name });
         }
       },
     });
-    send = r.send;
     await cmd(null);   // the driver's ready line
     setStatus('Preparing tasks…', false, true);
     for (let i = 0; i < ntasks; i++) await create();
