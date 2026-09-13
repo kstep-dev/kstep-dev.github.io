@@ -31,6 +31,7 @@ SITE = W / "site"
 KSTEP_URL = "https://github.com/kstep-dev/kstep/blob/master"
 RESULTS_URL = "https://raw.githubusercontent.com/kstep-dev/results/main"
 OFFICIAL_FIX = {"sync_wakeup": "aa3ee4f0b7541382c9f6f43f7408d73a5d4f4042"}   # upstream fix of a patch-based bug
+NODE = next(iter(W.glob("build/emsdk/node/*/bin/node")), shutil.which("node"))
 
 
 def catalog(bug) -> dict:
@@ -46,7 +47,6 @@ def catalog(bug) -> dict:
         "fixes": fixes,
         "plot": f"{RESULTS_URL}/repro_{bug.name}/plot.png" if bug.plot_format else None,   # results are published for every bug with a plot format
     }
-NODE = next(iter(W.glob("build/emsdk/node/*/bin/node")), shutil.which("node"))
 
 
 def build():
@@ -87,9 +87,9 @@ def deploy(version: str):
     origin = subprocess.check_output(["git", "-C", W, "remote", "get-url", "origin"], text=True).strip()
     with tempfile.TemporaryDirectory() as tmp:
         shutil.copytree(SITE, tmp, dirs_exist_ok=True)
-        system(f"git init -q -b gh-pages && git add -A && "
+        system(f"cd {tmp} && git init -q -b gh-pages && git add -A && "
                f"git -c user.name=build.py -c user.email=deploy@kstep commit -q -m 'Deploy {version}' && "
-               f"git push -q --force {origin} gh-pages", cwd=Path(tmp))
+               f"git push -q --force {origin} gh-pages")
     print(f"pushed gh-pages ({version})")
 
 
