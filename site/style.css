@@ -16,7 +16,7 @@ button:disabled { cursor: default; opacity: .5; }
 button.primary { background: AccentColor; color: AccentColorText; border-color: transparent; }
 button.primary:hover:not(:disabled) { filter: brightness(1.1); }
 table { border-collapse: collapse; width: 100%; font-size: .9rem; }
-th, td { padding: .2rem .5rem; border-bottom: 1px solid color-mix(in srgb, GrayText 40%, transparent); }
+th, td { border-bottom: 1px solid color-mix(in srgb, GrayText 40%, transparent); }
 th { font-weight: 600; }
 td button { padding: 0 .5rem; font-size: .8rem; }
 #status { color: GrayText; font-weight: normal; font-variant-numeric: tabular-nums; margin-left: .4rem; }

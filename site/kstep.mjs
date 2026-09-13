@@ -1,10 +1,10 @@
 // Shared by index.html (browser) and run.mjs (Node): boot kSTEP's `cli` driver in the wasm
 // QEMU and talk to it.
 //
-//   const { cmd, state, done } = await runKstep(Module, { files, smp, mem, params, onConsole, onEvent });
+//   const { cmd, shm, done } = await runKstep(Module, { files, smp, mem, params, onConsole, onEvent });
 //   await cmd(null);                 // the driver's ready line
 //   const reply = await cmd('tick'); // one command in flight at a time, replies in order
-//   const { cpus, tasks } = state(); // the machine's state, read out of guest memory
+//   const { cpus, tasks, events } = shm(); // the machine's state and the trace events since the last call, read out of guest memory
 //   const { panic } = await done;    // QEMU never exits under Emscripten: the console's reboot line marks the end
 //
 // files: { kernel, rootfs } as Uint8Array / ArrayBuffer (the arm64 Image and the initramfs).
@@ -12,9 +12,10 @@
 // The driver's JSON port (/dev/hvc0 in the guest) is one ordered stream: command replies
 // (a "timestamp" and no "type") interleaved with trace events ("type"). Replies resolve the
 // pending cmd(); events go to onEvent(record, line). Kernel console lines go to onConsole(line).
-// State is not in the stream: the driver rewrites a table in guest memory after every command
-// (kmod/state.h) and reports its physical address on the ready line; QEMU's monitor turns that
-// into an offset in the wasm heap (gpa2hva) and state() decodes the table in place.
+// State and trace events are not in the stream: the driver rewrites a region of guest memory
+// after every command and its hooks append events to a ring in it (kmod/shm.h); the ready line
+// reports its physical address, QEMU's monitor turns that into an offset in the wasm heap
+// (gpa2hva), and shm() decodes it in place.
 // locateFile/wasmBinary are passed through to the Emscripten module.
 
 export function qemuArgs({ smp, mem, params = {} }) {
@@ -37,25 +38,33 @@ export function qemuArgs({ smp, mem, params = {} }) {
   ];
 }
 
-// kmod/state.h, byte for byte: little-endian, u32/u64 fields, natural alignment.
-const HDR = 16, CPU_STRIDE = 64, TASK_STRIDE = 104, MAX_CPUS = 8, MAX_TASKS = 64;
-const STATE_SIZE = HDR + MAX_CPUS * CPU_STRIDE + MAX_TASKS * TASK_STRIDE;
+// kmod/shm.h, byte for byte: little-endian, u32/u64 fields, natural alignment.
+const HDR = 32, CPU_STRIDE = 64, TASK_STRIDE = 104, EVENT_STRIDE = 32, MAX_CPUS = 8, MAX_TASKS = 64, MAX_EVENTS = 256;
+const TASKS_OFF = HDR + MAX_CPUS * CPU_STRIDE, EVENTS_OFF = TASKS_OFF + MAX_TASKS * TASK_STRIDE;
+const SHM_SIZE = EVENTS_OFF + MAX_EVENTS * EVENT_STRIDE;
 const TASK_STATES = ['running', 'runnable', 'sleeping', 'blocked'];
+const EVENT_TYPES = ['load_balance', 'migrate'];
 const POLICIES = { 0: 'normal', 1: 'fifo', 2: 'rr', 3: 'batch', 5: 'idle' };   // the kernel's SCHED_* numbers
-function decodeState(view, bytes) {
+const cstr = (bytes, o, n) => new TextDecoder().decode(bytes.slice(o, o + Math.max(0, bytes.subarray(o, o + n).indexOf(0))));   // slice: TextDecoder refuses shared memory
+// seen: events already returned by an earlier call; the ring keeps the last MAX_EVENTS
+function decodeShm(view, bytes, seen) {
   for (;;) {
     const gen = view.getUint32(0, true);
     if (gen & 1) continue;   // the writer is mid-update
-    const ncpus = view.getUint32(8, true), ntasks = view.getUint32(12, true);
+    const ncpus = view.getUint32(8, true), ntasks = view.getUint32(12, true), nevents = view.getUint32(16, true);
+    if (ncpus > MAX_CPUS || ntasks > MAX_TASKS) throw new Error('shm layout mismatch');
     const u32 = (o) => view.getUint32(o, true), u64 = (o) => Number(view.getBigUint64(o, true));
     const cpus = Array.from({ length: ncpus }, (_, i) => { const o = HDR + i * CPU_STRIDE; return {
       cpu: u32(o), current: u32(o + 4), idle: !!u32(o + 8), capacity: u32(o + 12), nr_running: u64(o + 16), nr_switches: u64(o + 24),
       min_vruntime: u64(o + 32), cfs_util_avg: u64(o + 40), cfs_load_avg: u64(o + 48), cfs_runnable_avg: u64(o + 56) }; });
-    const tasks = Array.from({ length: ntasks }, (_, i) => { const o = HDR + MAX_CPUS * CPU_STRIDE + i * TASK_STRIDE; const flags = u32(o + 20); return {
+    const tasks = Array.from({ length: ntasks }, (_, i) => { const o = TASKS_OFF + i * TASK_STRIDE; const flags = u32(o + 20); return {
       task: u32(o), state: TASK_STATES[u32(o + 4)], cpu: u32(o + 8), policy: POLICIES[u32(o + 12)] ?? '?', nice: view.getInt32(o + 16, true),
       eligible: !!(flags & 1), delayed: !!(flags & 2), cpus: u64(o + 24), weight: u64(o + 32), sum_exec_runtime: u64(o + 40), vruntime: u64(o + 48),
-      deadline: u64(o + 56), slice: u64(o + 64), cgroup: new TextDecoder().decode(bytes.slice(o + 72, o + 72 + bytes.subarray(o + 72, o + 104).indexOf(0))) }; });   // slice: TextDecoder refuses shared memory
-    if (view.getUint32(0, true) === gen) return { timestamp: view.getUint32(4, true), cpus, tasks };
+      deadline: u64(o + 56), slice: u64(o + 64), cgroup: cstr(bytes, o + 72, 32) }; });
+    const events = [];
+    for (let n = Math.max(seen, nevents - MAX_EVENTS); n < nevents; n++) { const o = EVENTS_OFF + (n % MAX_EVENTS) * EVENT_STRIDE; events.push({
+      timestamp: u32(o), type: EVENT_TYPES[u32(o + 4)], task: u32(o + 8), src_cpu: u32(o + 12), dst_cpu: u32(o + 16), name: cstr(bytes, o + 20, 12) }); }
+    if (view.getUint32(0, true) === gen) return { timestamp: view.getUint32(4, true), cpus, tasks, events, nevents };
   }
 }
 
@@ -108,14 +117,15 @@ export async function runKstep(Module, { files, smp, mem, params, onConsole, onE
   });
   const cmd = async (line) => {
     const reply = await new Promise(r => { waiters.push(r); if (line !== null) sendCmd(line); });
-    if (line === null && reply.state !== undefined) {   // the ready line names the state table; map it once
-      sendMon(`gpa2hva 0x${reply.state.toString(16)}`);
+    if (line === null && reply.shm !== undefined) {   // the ready line names the shared region; map it once
+      sendMon(`gpa2hva 0x${reply.shm.toString(16)}`);
       const at = await hva;   // a host virtual address is an offset into the wasm heap
-      bytes = new Uint8Array(wasmMemory.buffer, at, STATE_SIZE);
-      view = new DataView(wasmMemory.buffer, at, STATE_SIZE);
+      bytes = new Uint8Array(wasmMemory.buffer, at, SHM_SIZE);
+      view = new DataView(wasmMemory.buffer, at, SHM_SIZE);
     }
     return reply;
   };
-  const state = () => decodeState(view, bytes);
-  return { module, cmd, state, done };
+  let seen = 0;   // events handed out so far
+  const shm = () => { const r = decodeShm(view, bytes, seen); seen = r.nevents; return r; };
+  return { module, cmd, shm, done };
 }

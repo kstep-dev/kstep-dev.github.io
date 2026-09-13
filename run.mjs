@@ -20,7 +20,7 @@ const smp = Number(args.smp ?? 3), mem = Number(args.mem ?? 64), cpus = smp - 1;
 const t0 = Date.now(), elapsed = () => ((Date.now() - t0) / 1000).toFixed(1);
 
 const Module = (await import(path.join(W, 'site', 'qemu', 'qemu-system-aarch64.js'))).default;
-const { cmd, state } = await runKstep(Module, {
+const { cmd, shm } = await runKstep(Module, {
   files: { kernel: fs.readFileSync(path.join(image, 'kernel')), rootfs: fs.readFileSync(path.join(image, 'rootfs.cpio')) },
   smp, mem,
   onConsole: (line) => { if ('verbose' in args) process.stderr.write(line + '\n'); },
@@ -34,7 +34,7 @@ if ('check' in args) {
     'cgroup-create /check', 'cgroup-weight /check 100', 'cgroup-cpus /check 1', `attach ${pid} /check`, `kill ${pid}`];
   const missing = [];
   for (const v of verbs) if ((await cmd(v)).error === 'unknown command') missing.push(v.split(' ')[0]);
-  const cpu = state().cpus.find(r => r.cpu === 1);
+  const cpu = shm().cpus.find(r => r.cpu === 1);
   const fields = ['current', 'nr_running', 'capacity', 'nr_switches', 'cfs_util_avg', 'cfs_load_avg', 'cfs_runnable_avg'];
   const statsOk = cpu && typeof cpu.idle === 'boolean' && fields.every(k => Number.isFinite(cpu[k]) && cpu[k] >= 0);
   await cmd('exit');
@@ -57,11 +57,11 @@ if ('check' in args) {
   const timeline = [];
   for (let i = 0; i < Number(args.ticks ?? 30); i++) {   // a step: one tick, whose snapshot says who is running where
     await cmd('tick');
-    timeline.push(Array.from({ length: cpus }, (_, c) => state().cpus.find(o => o.cpu === c + 1)?.current ?? 0));
+    timeline.push(Array.from({ length: cpus }, (_, c) => shm().cpus.find(o => o.cpu === c + 1)?.current ?? 0));
   }
   console.log('tasks', pids.join(' '));
   for (let c = 0; c < cpus; c++) console.log(`cpu${c + 1}`.padEnd(6), timeline.map(t => t[c] ? String(t[c]) : '.').join(''));
-  for (const s of state().tasks) console.log(`task ${s.task}: ${s.state} cpu=${s.cpu} runtime=${(s.sum_exec_runtime / 1e6).toFixed(1)}ms vruntime=${(s.vruntime / 1e6).toFixed(1)}ms`);
+  for (const s of shm().tasks) console.log(`task ${s.task}: ${s.state} cpu=${s.cpu} runtime=${(s.sum_exec_runtime / 1e6).toFixed(1)}ms vruntime=${(s.vruntime / 1e6).toFixed(1)}ms`);
   await cmd('exit');
 }
 console.error(`[${elapsed()}s] done`);

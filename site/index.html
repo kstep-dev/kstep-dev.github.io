@@ -400,7 +400,7 @@ const sync = (el, v) => {
   if (v === undefined || el.contains(document.activeElement) || el.dataset.pending) return;
   el.value = v;
 };
-// A CPU set as one checkbox per CPU 1..ncpus; `value` is the bitmask the state table reports, `list` the
+// A CPU set as one checkbox per CPU 1..ncpus; `value` is the bitmask the shared region reports, `list` the
 // cpulist the driver takes. The last ticked box stays ticked: an empty set is what the kernel rejects.
 function cpuMask(title, onChange) {
   const el = document.createElement('span'); el.title = title;
@@ -525,13 +525,18 @@ const append = (text, cls) => {
   if (log.childElementCount > LOG_MAX) log.firstElementChild.remove();
   log.scrollTop = log.scrollHeight;
 };
-// After every command the driver has rewritten the state table in guest memory (kmod/state.h);
-// vm.state() reads it. A task of ours no longer in the table has exited.
+// After every command the driver has rewritten the shared region (kmod/shm.h): vm.shm() reads the
+// state and the trace events since the last read. A task of ours no longer listed has exited.
 async function cmd(line) {
   if (line !== null) append('> ' + line);
   const reply = await vm.cmd(line);
   append(JSON.stringify(reply), reply.error ? 'err' : '');
-  const st = vm.state();
+  const st = vm.shm();
+  for (const e of st.events) {
+    append(JSON.stringify(e), 'event');
+    // the kernel's logical timestamp is the tick the event happened in (tick N -> column N-1)
+    (balances[Math.max(0, e.timestamp - 1)] ??= []).push({ cpu: e.dst_cpu, task: e.task, src: e.src_cpu, domain: e.name });
+  }
   cpuRecords = new Map(st.cpus.map(c => [c.cpu, c]));
   const live = new Set(st.tasks.map(s => s.task));
   for (const s of st.tasks) { const t = tasks.find(t => t.id === s.task); if (t) { t.stat = s; t.alive = true; renderTask(t); } }
@@ -649,14 +654,6 @@ async function boot() {
         con.append(line + '\n'); if (atBottom) con.scrollTop = con.scrollHeight;
         if (startup && line.trim()) { $('boot-preview').textContent = line; $('boot-preview').hidden = false; }
         if (line.includes('Kernel panic')) { setStatus('Kernel panic', true); $('speed').value = 0; schedule(); }
-      },
-      onEvent: (o, line) => {   // trace events; command replies resolve cmd(), state comes from vm.state()
-        if (o.type === 'load_balance' || o.type === 'migrate') {
-          append(line, 'event');
-          // the kernel's logical timestamp is the tick the event happened in (tick N -> column N-1);
-          // arrival order is not reliable, the balancer's lines can trail the tick reply
-          (balances[Math.max(0, o.timestamp - 1)] ??= []).push({ cpu: o.dst_cpu, task: o.type === 'migrate' ? o.task : 0, src: o.src_cpu, domain: o.name });
-        }
       },
     });
     await cmd(null);   // the driver's ready line
