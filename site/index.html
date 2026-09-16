@@ -105,12 +105,12 @@
 
 <h2>Tasks <span><button id="create" hidden>create task</button></span></h2>
 <div class="table-scroll" role="region" aria-label="Tasks" tabindex="0">
-<table id="tasks"><thead><tr><th></th><th>task</th><th>state</th><th>cpu</th><th id="aff-head">affinity</th><th>nice</th><th>policy</th><th>weight</th><th>runtime<br>ms</th><th>vruntime<br>ms</th><th>deadline<br>ms</th><th>slice<br>ms</th><th>cgroup</th><th></th></tr></thead><tbody></tbody></table>
+<table id="tasks"><thead><tr><th></th><th>task</th><th>state</th><th>cpu</th><th>affinity</th><th>nice</th><th>policy</th><th>weight</th><th>runtime<br>ms</th><th>vruntime<br>ms</th><th>deadline<br>ms</th><th>slice<br>ms</th><th>cgroup</th><th></th></tr></thead><tbody></tbody></table>
 </div>
 
 <h2>Cgroups</h2>
 <div class="table-scroll" role="region" aria-label="Cgroups" tabindex="0">
-<table id="groups"><thead><tr><th>cgroup</th><th>weight</th><th id="cpus-head">cpus</th><th>tasks</th><th></th></tr></thead><tbody></tbody></table>
+<table id="groups"><thead><tr><th>cgroup</th><th>weight</th><th>cpus</th><th>tasks</th><th></th></tr></thead><tbody></tbody></table>
 </div>
 
 <section id="cpus" aria-labelledby="cpus-title">
@@ -402,12 +402,20 @@ const sync = (el, v) => {
   el.value = v;
 };
 // A CPU set as one checkbox per CPU 1..ncpus; `value` is the bitmask the shared region reports, `list` the
-// cpulist the driver takes. The last ticked box stays ticked: an empty set is what the kernel rejects.
-function cpuMask(title, onChange) {
+// cpulist the driver takes. Every toggle is sent, including an empty set: the kernel is the one that
+// says no, and its refusal shows in the transcript like any other.
+function cpuMask(title, line) {
   const el = document.createElement('span'); el.title = title;
   const boxes = Array.from({ length: ncpus }, (_, i) => {
     const b = document.createElement('input'); b.type = 'checkbox'; b.checked = true; b.title = `CPU ${i + 1}`;
-    b.onchange = () => { if (!boxes.some(x => x.checked)) { b.checked = true; return; } onChange(el.list); };
+    b.onchange = () => {
+      el.dataset.pending = '1';
+      enqueue(async () => {
+        const r = await cmd(line(el.list));
+        delete el.dataset.pending;
+        if (r.error) b.blur();   // sync() leaves a focused control alone, and the refresh has to put the real set back
+      });
+    };
     el.append(b); return b;
   });
   Object.defineProperty(el, 'value', {
@@ -446,10 +454,7 @@ function renderTask(t) {
     pol.replaceChildren(...['normal', 'batch', 'idle', 'fifo', 'rr'].map(v => new Option(v, v)));
     onSet(pol, `policy ${t.id}`);
     tr.cells[POL].append(pol);
-    const aff = cpuMask(AFF_TITLE, (want) => {
-      aff.dataset.pending = '1';
-      enqueue(async () => { await cmd(`affinity ${t.id} ${want}`); delete aff.dataset.pending; });
-    });
+    const aff = cpuMask(AFF_TITLE, (want) => `affinity ${t.id} ${want}`);
     tr.cells[AFF].append(aff);
     // cgroup: a select over the root and the cgroups created so far
     const grp = document.createElement('select'); grp.title = 'cgroup of the task';
@@ -466,9 +471,8 @@ function renderTask(t) {
   sync(tr.cells[NICE].firstElementChild, s.nice);
   sync(tr.cells[POL].firstElementChild, s.policy);
   sync(tr.cells[AFF].firstElementChild, s.cpus);
-  // the cgroup select offers the root and every cgroup created so far; rebuilding its options
+  // the cgroup select offers the root and every cgroup the kernel reports; rebuilding its options
   // clears the selection, so set it from the kernel afterwards
-  if (s.cgroup !== undefined && !groups.has(s.cgroup) && s.cgroup !== '/') groups.set(s.cgroup, {});
   const grp = tr.cells[GRP].firstElementChild, want = groupPaths();
   if ([...grp.options].map(o => o.value).join() !== want.join())
     grp.replaceChildren(...want.map(g => new Option(g, g)));
@@ -478,21 +482,17 @@ function renderTask(t) {
     .forEach((v, i) => { if (v === undefined) return; const text = String(v); if (tr.cells[i + 1].textContent !== text) tr.cells[i + 1].textContent = text; });
 }
 
-// ---- cgroups: a tree under the root "/" (path -> {weight, cpus}); the table lists the root
-// and every cgroup created in this session, indented by depth, with "add child" and (below the
-// root) "delete" buttons per row ----
-const groups = new Map();
+// ---- cgroups: the tree the kernel reports after every command (path -> {weight, cpus}, from
+// kmod/shm.h), root "/" first. Rows are indented by depth and carry "add child" and, below the
+// root, "delete"; the weight and cpuset controls are views of the kernel's values, like the task
+// table's, so a change made behind the UI's back shows up. ----
+let groups = new Map();
 let ngroups = 0;
 async function newGroup(parent) {
-  const path = `${parent === '/' ? '' : parent}/g${++ngroups}`;
-  const r = await cmd(`cgroup-create ${path}`);
-  if (!r.error) { groups.set(path, { weight: 100 }); renderGroups(); }
+  await cmd(`cgroup-create ${parent === '/' ? '' : parent}/g${++ngroups}`);
 }
 // The kernel refuses a cgroup that still has tasks or children, and says so in the transcript.
-async function delGroup(path) {
-  const r = await cmd(`cgroup-destroy ${path}`);
-  if (!r.error) { groups.delete(path); renderGroups(); }
-}
+const delGroup = (path) => cmd(`cgroup-destroy ${path}`);
 const groupPaths = () => ['/', ...[...groups.keys()].sort()];
 function renderGroups() {
   const tb = $('groups').querySelector('tbody');
@@ -505,15 +505,10 @@ function renderGroups() {
       const depth = path === '/' ? 0 : path.split('/').length - 1;
       tr.cells[0].textContent = path; tr.cells[0].style.paddingLeft = `${0.5 + depth}rem`;
       if (path !== '/') {
-        const w = document.createElement('input'); w.type = 'number'; w.min = 1; w.max = 10000; w.value = g.weight ?? 100; w.style.width = '4rem';
-        w.onchange = () => enqueue(async () => { const r = await cmd(`cgroup-weight ${path} ${w.value}`); if (!r.error) g.weight = +w.value; else w.value = g.weight ?? 100; });
+        const w = document.createElement('input'); w.type = 'number'; w.min = 1; w.max = 10000; w.style.width = '4rem';
+        onSet(w, `cgroup-weight ${path}`);
         tr.cells[1].append(w);
-        const c = cpuMask('cpuset.cpus', (want) => enqueue(async () => {
-          const r = await cmd(`cgroup-cpus ${path} ${want}`);
-          if (!r.error) g.cpus = c.value; else c.value = g.cpus;
-        }));
-        if (g.cpus) c.value = g.cpus;
-        tr.cells[2].append(c);
+        tr.cells[2].append(cpuMask('cpuset.cpus', (want) => `cgroup-cpus ${path} ${want}`));
       }
       const child = document.createElement('button'); child.textContent = 'add child'; child.title = `create a cgroup under ${path}`;
       child.onclick = () => enqueue(() => newGroup(path));
@@ -524,6 +519,7 @@ function renderGroups() {
         tr.cells[4].append(' ', del);
       }
     }
+    if (path !== '/') { sync(tr.cells[1].firstElementChild, g.weight); sync(tr.cells[2].firstElementChild, g.cpus); }
     const members = tasks.filter(t => t.alive && t.stat?.cgroup === path).map(t => t.id).join(', ');
     if (tr.cells[3].textContent !== members) tr.cells[3].textContent = members;
   }
@@ -553,6 +549,8 @@ async function cmd(line) {
     (balances[Math.max(0, e.timestamp - 1)] ??= []).push({ cpu: e.dst_cpu, task: e.task, src: e.src_cpu, domain: e.name });
   }
   cpuRecords = new Map(st.cpus.map(c => [c.cpu, c]));
+  // the cgroup tree is the kernel's, not the UI's: paths, weights and cpusets as they are now
+  groups = new Map(st.groups.filter(g => g.path !== '/').map(g => [g.path, { weight: g.weight, cpus: g.cpus }]));
   const live = new Set(st.tasks.map(s => s.task));
   for (const s of st.tasks) { const t = tasks.find(t => t.id === s.task); if (t) { t.stat = s; t.alive = true; renderTask(t); } }
   for (const t of tasks) if (t.alive && !live.has(t.id)) { t.alive = false; renderTask(t); }
@@ -628,8 +626,6 @@ machine = scenario ? { ...scenario.machine, caps: scenario.machine.caps ?? [] }
 if (nCpus(machine) > MAX_CPUS) machine = { sockets: 1, clusters: 1, cores: 2, threads: 2, caps: [] };
 for (const k of DIMS) $(k).value = machine[k];
 ncpus = nCpus(machine);   // the VM's CPU count
-const cpuRange = `(cpu 1${ncpus > 1 ? `-${ncpus}` : ''})`;   // the checkbox columns' headers name the range
-for (const [id, name] of [['aff-head', 'affinity'], ['cpus-head', 'cpus']]) $(id).replaceChildren(name, document.createElement('br'), cpuRange);
 drawMachine(machine.caps);
 for (const k of DIMS) $(k).oninput = () => drawMachine(formMachine().caps);
 $('discard-cpus').onclick = () => setCpuDraft(machine);
@@ -679,7 +675,7 @@ async function boot() {
     for (const line of scenario?.steps ?? []) {
       const [verb, who, ...rest] = line.split(' ');
       if (verb === 'tick') { for (let i = 0; i < +who; i++) await step(); continue; }
-      if (verb.startsWith('cgroup-')) { const r = await cmd(line); if (!r.error && verb === 'cgroup-create') groups.set(who, {}); continue; }
+      if (verb.startsWith('cgroup-')) { await cmd(line); continue; }
       for (const t of who === '*' ? tasks : [{ id: who }]) await cmd(`${verb} ${t.id} ${rest.join(' ')}`.trim());
     }
     renderGroups();   // the cgroup tree (root row) once the VM is up

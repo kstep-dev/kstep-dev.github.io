@@ -42,9 +42,11 @@ export function qemuArgs({ smp, mem, params = {} }) {
 }
 
 // kmod/shm.h, byte for byte: little-endian, u32/u64 fields, natural alignment.
-const HDR = 32, CPU_STRIDE = 64, TASK_STRIDE = 104, MAX_CPUS = 8, MAX_TASKS = 64;
+const HDR = 32, CPU_STRIDE = 64, TASK_STRIDE = 104, CGROUP_STRIDE = 56;
+const MAX_CPUS = 8, MAX_TASKS = 64, MAX_CGROUPS = 16;
 const TASKS_OFF = HDR + MAX_CPUS * CPU_STRIDE;
-const SHM_SIZE = TASKS_OFF + MAX_TASKS * TASK_STRIDE;
+const CGROUPS_OFF = TASKS_OFF + MAX_TASKS * TASK_STRIDE;
+const SHM_SIZE = CGROUPS_OFF + MAX_CGROUPS * CGROUP_STRIDE;
 const TASK_STATES = ['running', 'runnable', 'sleeping', 'blocked'];
 const POLICIES = { 0: 'normal', 1: 'fifo', 2: 'rr', 3: 'batch', 5: 'idle' };   // the kernel's SCHED_* numbers
 const cstr = (bytes, o, n) => new TextDecoder().decode(bytes.slice(o, o + Math.max(0, bytes.subarray(o, o + n).indexOf(0))));   // slice: TextDecoder refuses shared memory
@@ -52,8 +54,8 @@ function decodeShm(view, bytes) {
   for (;;) {
     const gen = view.getUint32(0, true);
     if (gen & 1) continue;   // the writer is mid-update
-    const ncpus = view.getUint32(8, true), ntasks = view.getUint32(12, true);
-    if (ncpus > MAX_CPUS || ntasks > MAX_TASKS) throw new Error('shm layout mismatch');
+    const ncpus = view.getUint32(8, true), ntasks = view.getUint32(12, true), ngroups = view.getUint32(16, true);
+    if (ncpus > MAX_CPUS || ntasks > MAX_TASKS || ngroups > MAX_CGROUPS) throw new Error('shm layout mismatch');
     const u32 = (o) => view.getUint32(o, true), u64 = (o) => Number(view.getBigUint64(o, true));
     const cpus = Array.from({ length: ncpus }, (_, i) => { const o = HDR + i * CPU_STRIDE; return {
       cpu: u32(o), current: u32(o + 4), idle: !!u32(o + 8), capacity: u32(o + 12), nr_running: u64(o + 16), nr_switches: u64(o + 24),
@@ -62,7 +64,10 @@ function decodeShm(view, bytes) {
       task: u32(o), state: TASK_STATES[u32(o + 4)], cpu: u32(o + 8), policy: POLICIES[u32(o + 12)] ?? '?', nice: view.getInt32(o + 16, true),
       eligible: !!(flags & 1), delayed: !!(flags & 2), cpus: u64(o + 24), weight: u64(o + 32), sum_exec_runtime: u64(o + 40), vruntime: u64(o + 48),
       deadline: u64(o + 56), slice: u64(o + 64), cgroup: cstr(bytes, o + 72, 32) }; });
-    if (view.getUint32(0, true) === gen) return { timestamp: view.getUint32(4, true), cpus, tasks };
+    // the cgroups the kernel holds, the root ("/") first, in tree order
+    const groups = Array.from({ length: ngroups }, (_, i) => { const o = CGROUPS_OFF + i * CGROUP_STRIDE; return {
+      path: cstr(bytes, o, 40), cpus: u64(o + 40), weight: u32(o + 48) }; });
+    if (view.getUint32(0, true) === gen) return { timestamp: view.getUint32(4, true), cpus, tasks, groups };
   }
 }
 
