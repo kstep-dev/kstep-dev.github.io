@@ -31,7 +31,7 @@ if ('check' in args) {
   const pid = (await cmd('create')).task;
   // one command per verb the page sends; only "unknown command" counts as missing
   const verbs = ['tick', `nice ${pid} 0`, `policy ${pid} normal`, `affinity ${pid} 1`, `pause ${pid}`, `wake ${pid}`,
-    'cgroup-create /check', 'cgroup-weight /check 100', 'cgroup-cpus /check 1', `attach ${pid} /check`, `kill ${pid}`];
+    'cgroup-create /check', 'cgroup-weight /check 100', 'cgroup-cpus /check 1', `cgroup-attach /check ${pid}`, `kill ${pid}`];
   const missing = [];
   for (const v of verbs) if ((await cmd(v)).error === 'unknown command') missing.push(v.split(' ')[0]);
   const cpu = shm().cpus.find(r => r.cpu === 1);

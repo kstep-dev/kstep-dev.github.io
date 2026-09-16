@@ -380,11 +380,12 @@ function renderCpus() {
     values.forEach((v, i) => tr.cells[i + 1].textContent = v);
   }
 }
-// The machine reaches the kernel as kSTEP's topology=/capacity= boot parameters.
-function cpuParams(m) {
+// The machine reaches the kernel as cli commands, sent once the driver is ready: capacity
+// first (what the hardware is), then the topology that rebuilds the sched domains.
+function cpuSetup(m) {
   const caps = [];
   for (let c = 1; c <= nCpus(m); c++) { const cap = m.caps[coreOf(m, c)] ?? 1024; if (cap !== 1024) caps.push(`${c}=${cap}`); }
-  return { topology: topoSpec(m), capacity: caps.join(',') };
+  return [caps.length ? `cpu-cap ${caps.join(',')}` : null, `cpu-topo ${topoSpec(m)}`].filter(Boolean);
 }
 
 // ---- task table: rows are created once and updated in place (no rebuild, no flicker) ----
@@ -416,12 +417,12 @@ function cpuMask(title, onChange) {
   Object.defineProperty(el, 'list', { get: () => boxes.flatMap((b, i) => b.checked ? [i + 1] : []).join(',') });
   return el;
 }
-// Send a control's value as `<verb> <value>`; the value is read when the event fires.
-const onSet = (el, verb) => el.onchange = () => {
+// Send a control's value as `<verb> <value> [tail]`; the value is read when the event fires.
+const onSet = (el, verb, tail = '') => el.onchange = () => {
   const v = el.value;
   el.dataset.pending = '1';
   enqueue(async () => {
-    const r = await cmd(`${verb} ${v}`);   // a rejection shows in the transcript; the refresh restores the real value
+    const r = await cmd(`${verb} ${v}${tail}`);   // a rejection shows in the transcript; the refresh restores the real value
     delete el.dataset.pending;
     if (r.error) el.blur();   // sync() leaves a focused control alone
   });
@@ -452,7 +453,7 @@ function renderTask(t) {
     tr.cells[AFF].append(aff);
     // cgroup: a select over the root and the cgroups created so far
     const grp = document.createElement('select'); grp.title = 'cgroup of the task';
-    onSet(grp, `attach ${t.id}`);
+    onSet(grp, 'cgroup-attach', ` ${t.id}`);
     tr.cells[GRP].append(grp);
     // pause / wake (label follows the task's state) and kill
     const pause = document.createElement('button'); pause.textContent = 'pause';
@@ -478,13 +479,19 @@ function renderTask(t) {
 }
 
 // ---- cgroups: a tree under the root "/" (path -> {weight, cpus}); the table lists the root
-// and every cgroup created in this session, indented by depth, with a "child" button per row ----
+// and every cgroup created in this session, indented by depth, with "add child" and (below the
+// root) "delete" buttons per row ----
 const groups = new Map();
 let ngroups = 0;
 async function newGroup(parent) {
   const path = `${parent === '/' ? '' : parent}/g${++ngroups}`;
   const r = await cmd(`cgroup-create ${path}`);
   if (!r.error) { groups.set(path, { weight: 100 }); renderGroups(); }
+}
+// The kernel refuses a cgroup that still has tasks or children, and says so in the transcript.
+async function delGroup(path) {
+  const r = await cmd(`cgroup-destroy ${path}`);
+  if (!r.error) { groups.delete(path); renderGroups(); }
 }
 const groupPaths = () => ['/', ...[...groups.keys()].sort()];
 function renderGroups() {
@@ -511,10 +518,17 @@ function renderGroups() {
       const child = document.createElement('button'); child.textContent = 'add child'; child.title = `create a cgroup under ${path}`;
       child.onclick = () => enqueue(() => newGroup(path));
       tr.cells[4].append(child);
+      if (path !== '/') {
+        const del = document.createElement('button'); del.textContent = 'delete'; del.title = `destroy ${path} (it must have no tasks and no children)`;
+        del.onclick = () => enqueue(() => delGroup(path));
+        tr.cells[4].append(' ', del);
+      }
     }
     const members = tasks.filter(t => t.alive && t.stat?.cgroup === path).map(t => t.id).join(', ');
     if (tr.cells[3].textContent !== members) tr.cells[3].textContent = members;
   }
+  const live = new Set(groupPaths());
+  for (const tr of [...tb.rows]) if (!live.has(tr.dataset.path)) tr.remove();
 }
 
 // ---- transport: kstep.mjs's cmd(), one command in flight at a time, with a transcript ----
@@ -526,13 +540,14 @@ const append = (text, cls) => {
   log.scrollTop = log.scrollHeight;
 };
 // After every command the driver has rewritten the shared region (kmod/shm.h): vm.shm() reads the
-// state and the trace events since the last read. A task of ours no longer listed has exited.
+// state, and vm.events() drains the trace records the command's hooks wrote on the stream.
+// A task of ours no longer listed has exited.
 async function cmd(line) {
   if (line !== null) append('> ' + line);
   const reply = await vm.cmd(line);
   append(JSON.stringify(reply), reply.error ? 'err' : '');
   const st = vm.shm();
-  for (const e of st.events) {
+  for (const e of vm.events()) {
     append(JSON.stringify(e), 'event');
     // the kernel's logical timestamp is the tick the event happened in (tick N -> column N-1)
     (balances[Math.max(0, e.timestamp - 1)] ??= []).push({ cpu: e.dst_cpu, task: e.task, src: e.src_cpu, domain: e.name });
@@ -588,7 +603,7 @@ const SCENARIOS = {
     text: 'Six equal tasks on two equal CPUs. Wakeup placement at creation leaves five on cpu1 and one on cpu2. The periodic balancer then moves one task at a time, roughly every 140 ticks, until the split is 3 : 3. Balancing is slow and stepwise, not instant; compare Big and little cores, where it stops earlier on purpose.' },
   balance: { title: 'Load balancing', machine: { sockets: 1, clusters: 1, cores: 2, threads: 1 }, tasks: 4, steps: ['affinity * 1', 'tick 10', 'affinity * 1-2'],
     text: 'Four tasks start pinned to cpu1 while cpu2 idles; after ten ticks they may run on either CPU. cpu2\u2019s balancer (dashed marks) looks for work at each balance interval and after a while pulls two tasks over in one go (bars at the start of their slices). Nothing moves immediately: balancing is periodic, not instant.' },
-  groups: { title: 'Cgroup fairness', machine: { sockets: 1, clusters: 1, cores: 1, threads: 1 }, tasks: 4, steps: ['cgroup-create /a', 'cgroup-create /b', 'attach 1 /a', 'attach 2 /b', 'attach 3 /b', 'attach 4 /b'],
+  groups: { title: 'Cgroup fairness', machine: { sockets: 1, clusters: 1, cores: 1, threads: 1 }, tasks: 4, steps: ['cgroup-create /a', 'cgroup-create /b', 'cgroup-attach /a 1', 'cgroup-attach /b 2', 'cgroup-attach /b 3', 'cgroup-attach /b 4'],
     text: 'One CPU, four equal tasks: task 1 alone in cgroup /a, the other three together in /b. Fairness is applied between cgroups first, then within: task 1 gets half the CPU, the three others a sixth each. Set /b\u2019s weight to 300 in the Cgroups table and all four become equal.' },
   little: { title: 'Big and little cores', machine: { sockets: 1, clusters: 1, cores: 2, threads: 1, caps: [1024, 512] }, tasks: 6, steps: [],
     text: 'The same six tasks, but cpu2 has half the capacity of cpu1. Placement again starts at 5 : 1. The balancer moves one task to the little core after a couple of hundred ticks and then stops at 4 : 2, matching the 2 : 1 capacity ratio; on equal CPUs (Two CPUs) it would continue to 3 : 3. Load is balanced per unit of capacity, not per task.' },
@@ -647,7 +662,7 @@ async function boot() {
     setStatus('Booting kernel…', false, true);
     vm = await runKstep(Module, {
       files: { kernel, rootfs },
-      smp: ncpus + 1, mem: 64, params: cpuParams(machine),
+      smp: ncpus + 1, mem: 64,
       locateFile: (f) => `qemu/${f}?v=${V}`,
       onConsole: (line) => {
         const atBottom = con.scrollHeight - con.scrollTop - con.clientHeight < 40;
@@ -657,6 +672,7 @@ async function boot() {
       },
     });
     await cmd(null);   // the driver's ready line
+    for (const line of cpuSetup(machine)) { const r = await cmd(line); if (r.error) throw new Error(`${line}: ${r.error}`); }
     setStatus('Preparing tasks…', false, true);
     for (let i = 0; i < ntasks; i++) await create();
     // scenario setup: driver lines as they are, except "tick N" and "*" for every task

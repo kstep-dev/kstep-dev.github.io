@@ -4,16 +4,19 @@
 //   const { cmd, shm, done } = await runKstep(Module, { files, smp, mem, params, onConsole, onEvent });
 //   await cmd(null);                 // the driver's ready line
 //   const reply = await cmd('tick'); // one command in flight at a time, replies in order
-//   const { cpus, tasks, events } = shm(); // the machine's state and the trace events since the last call, read out of guest memory
+//   const { cpus, tasks } = shm();   // the machine's state, read out of guest memory
+//   const trace = events();          // trace records seen since the last call
 //   const { panic } = await done;    // QEMU never exits under Emscripten: the console's reboot line marks the end
 //
 // files: { kernel, rootfs } as Uint8Array / ArrayBuffer (the arm64 Image and the initramfs).
-// params: extra kSTEP module parameters after the `--` (topology=, capacity=, ...).
+// params: extra kSTEP module parameters after the `--` (the machine itself is set with
+// cli commands, not boot parameters).
 // The driver's JSON port (/dev/hvc0 in the guest) is one ordered stream: command replies
 // (a "timestamp" and no "type") interleaved with trace events ("type"). Replies resolve the
-// pending cmd(); events go to onEvent(record, line). Kernel console lines go to onConsole(line).
-// State and trace events are not in the stream: the driver rewrites a region of guest memory
-// after every command and its hooks append events to a ring in it (kmod/shm.h); the ready line
+// pending cmd(); events go to onEvent(record, line) and are queued for events(). Because the
+// stream is ordered, every event of a command has arrived by the time its reply resolves.
+// State is not in the stream: the driver rewrites a region of guest memory
+// after every command (kmod/shm.h); the ready line
 // reports its physical address, QEMU's monitor turns that into an offset in the wasm heap
 // (gpa2hva), and shm() decodes it in place.
 // locateFile/wasmBinary are passed through to the Emscripten module.
@@ -39,19 +42,17 @@ export function qemuArgs({ smp, mem, params = {} }) {
 }
 
 // kmod/shm.h, byte for byte: little-endian, u32/u64 fields, natural alignment.
-const HDR = 32, CPU_STRIDE = 64, TASK_STRIDE = 104, EVENT_STRIDE = 32, MAX_CPUS = 8, MAX_TASKS = 64, MAX_EVENTS = 256;
-const TASKS_OFF = HDR + MAX_CPUS * CPU_STRIDE, EVENTS_OFF = TASKS_OFF + MAX_TASKS * TASK_STRIDE;
-const SHM_SIZE = EVENTS_OFF + MAX_EVENTS * EVENT_STRIDE;
+const HDR = 32, CPU_STRIDE = 64, TASK_STRIDE = 104, MAX_CPUS = 8, MAX_TASKS = 64;
+const TASKS_OFF = HDR + MAX_CPUS * CPU_STRIDE;
+const SHM_SIZE = TASKS_OFF + MAX_TASKS * TASK_STRIDE;
 const TASK_STATES = ['running', 'runnable', 'sleeping', 'blocked'];
-const EVENT_TYPES = ['load_balance', 'migrate'];
 const POLICIES = { 0: 'normal', 1: 'fifo', 2: 'rr', 3: 'batch', 5: 'idle' };   // the kernel's SCHED_* numbers
 const cstr = (bytes, o, n) => new TextDecoder().decode(bytes.slice(o, o + Math.max(0, bytes.subarray(o, o + n).indexOf(0))));   // slice: TextDecoder refuses shared memory
-// seen: events already returned by an earlier call; the ring keeps the last MAX_EVENTS
-function decodeShm(view, bytes, seen) {
+function decodeShm(view, bytes) {
   for (;;) {
     const gen = view.getUint32(0, true);
     if (gen & 1) continue;   // the writer is mid-update
-    const ncpus = view.getUint32(8, true), ntasks = view.getUint32(12, true), nevents = view.getUint32(16, true);
+    const ncpus = view.getUint32(8, true), ntasks = view.getUint32(12, true);
     if (ncpus > MAX_CPUS || ntasks > MAX_TASKS) throw new Error('shm layout mismatch');
     const u32 = (o) => view.getUint32(o, true), u64 = (o) => Number(view.getBigUint64(o, true));
     const cpus = Array.from({ length: ncpus }, (_, i) => { const o = HDR + i * CPU_STRIDE; return {
@@ -61,10 +62,7 @@ function decodeShm(view, bytes, seen) {
       task: u32(o), state: TASK_STATES[u32(o + 4)], cpu: u32(o + 8), policy: POLICIES[u32(o + 12)] ?? '?', nice: view.getInt32(o + 16, true),
       eligible: !!(flags & 1), delayed: !!(flags & 2), cpus: u64(o + 24), weight: u64(o + 32), sum_exec_runtime: u64(o + 40), vruntime: u64(o + 48),
       deadline: u64(o + 56), slice: u64(o + 64), cgroup: cstr(bytes, o + 72, 32) }; });
-    const events = [];
-    for (let n = Math.max(seen, nevents - MAX_EVENTS); n < nevents; n++) { const o = EVENTS_OFF + (n % MAX_EVENTS) * EVENT_STRIDE; events.push({
-      timestamp: u32(o), type: EVENT_TYPES[u32(o + 4)], task: u32(o + 8), src_cpu: u32(o + 12), dst_cpu: u32(o + 16), name: cstr(bytes, o + 20, 12) }); }
-    if (view.getUint32(0, true) === gen) return { timestamp: view.getUint32(4, true), cpus, tasks, events, nevents };
+    if (view.getUint32(0, true) === gen) return { timestamp: view.getUint32(4, true), cpus, tasks };
   }
 }
 
@@ -98,6 +96,7 @@ export async function runKstep(Module, { files, smp, mem, params, onConsole, onE
     return (line) => { for (const b of new TextEncoder().encode(line + '\n')) inq.push(b); };
   };
   let sendCmd, sendMon, resolveHva, view, bytes;
+  const trace = [];   // trace records from the stream, drained by events()
   const hva = new Promise(r => { resolveHva = r; });
   // The module's memory, created here so guest RAM can be read: 1 GB (setup.sh's TOTAL_MEMORY),
   // shared between the vCPU workers and this thread.
@@ -109,7 +108,7 @@ export async function runKstep(Module, { files, smp, mem, params, onConsole, onE
       m.FS.writeFile('/kernel', new Uint8Array(files.kernel));
       m.FS.writeFile('/rootfs.cpio', new Uint8Array(files.rootfs));
       m.FS.createDevice('/dev', 'console0', null, console_);
-      sendCmd = pipe(m, '/dev/hvc0', 1, (line) => { const o = JSON.parse(line); if ('type' in o) onEvent?.(o, line); else waiters.shift()?.(o); });
+      sendCmd = pipe(m, '/dev/hvc0', 1, (line) => { const o = JSON.parse(line); if ('type' in o) { trace.push(o); onEvent?.(o, line); } else waiters.shift()?.(o); });
       sendMon = pipe(m, '/dev/monitor', 2, (line) => { const m = /Host virtual address for 0x[0-9a-f]+ .* is 0x([0-9a-f]+)/.exec(line); if (m) resolveHva(parseInt(m[1], 16)); });
     }],
     print: (s) => log('[qemu] ' + s),
@@ -125,7 +124,7 @@ export async function runKstep(Module, { files, smp, mem, params, onConsole, onE
     }
     return reply;
   };
-  let seen = 0;   // events handed out so far
-  const shm = () => { const r = decodeShm(view, bytes, seen); seen = r.nevents; return r; };
-  return { module, cmd, shm, done };
+  const shm = () => decodeShm(view, bytes);
+  const events = () => trace.splice(0);   // the records seen since the last call
+  return { module, cmd, shm, events, done };
 }
