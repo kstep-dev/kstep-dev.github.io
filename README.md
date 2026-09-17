@@ -73,11 +73,11 @@ runnable averages, root CFS minimum vruntime, and cumulative context switches.
 Older images show unavailable counters rather than inferred runqueue values;
 `run.mjs --check` requires these records before deployment.
 
-The Charts section is the run: one column per tick, the window set by the scrollbar (pan) and the
+The Charts section is the run: one column per tick, the window set by the wheel (pan) and the
 column width (ctrl or cmd wheel to zoom), and every figure handed that same window so a column
-cannot drift between two of them. Placement is the default and replaces what used to be a separate
-timeline canvas: a row per CPU, shared out at each tick among the tasks on that CPU, solid for the
-one that ran and faint for those queued behind it -- which the old canvas could not show.
+cannot drift between two of them. Figures plot the kernel's own values, so the axis means what the
+Tasks and CPUs tables mean. Placement is the default: a row per CPU, shared out at each tick among
+the tasks on that CPU, solid for the one that ran and faint for those queued behind it.
 
 The Topology editor starts folded above the charts. It is a draft: presets, dimensions, and per-core capacities do
 not affect the running session until Restart. Discard restores the running

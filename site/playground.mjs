@@ -142,30 +142,19 @@ function draw() {
 }
 
 // ---- figures: any per-task or per-CPU signal over the run's ticks ----
-// One catalog entry per signal worth watching *change*, and the toggles above the charts
-// are built from it: adding or dropping a signal is a line here, and the drawing code never has
-// to know. Deliberately a subset of what the tables show -- a constant is a table cell, not a
-// line, so slice and capacity are left out (neither moves within a session; capacity is set at
-// boot and changing it reboots), and so are nice and weight -- two units for one number, which
-// only ever steps when you set it yourself, and which the Tasks table already shows.
-// Because snapshots holds whole records, switching metric re-plots the run already recorded
-// instead of needing it replayed. `domain` picks the series (a line per task, or per CPU), `get`
-// pulls the number out of that record. How it is read is the figure's choice, not the metric's:
-//   value  the number as it stands          (utilization, nr_running, which CPU)
-//   since  its growth since the window’s left edge, for counters that only ever climb
-//          (CPU time, vruntime, context switches) — slope is then the rate
+// One entry per signal worth watching change, and the toggles above the charts are built from it:
+// adding or dropping a figure is a line here, and the drawing code never has to know. `domain`
+// picks the series (a line per task, or per CPU) and `get` pulls the number out of that record --
+// the kernel's own number, plotted as it stands, so the axis means what the Tasks and CPUs tables
+// mean. Because snapshots holds whole records, ticking a figure on re-plots the run already
+// recorded instead of needing it replayed.
+//
+// Deliberately a subset of what the tables show: a constant is a table cell, not a line. Slice and
+// capacity never move within a session (capacity is set at boot, and changing it reboots), and
+// nice and weight are two units for one number that only steps when you set it yourself.
 const NS = (v) => v / 1e6;
-const METRICS = {
-  runtime:   { label: 'CPU time',          domain: 'task', get: (r) => NS(r.sum_exec_runtime), unit: 'ms' },
-  vruntime:  { label: 'Virtual runtime',   domain: 'task', get: (r) => NS(r.vruntime),         unit: 'ms' },
-  deadline:  { label: 'Deadline',          domain: 'task', get: (r) => NS(r.deadline),         unit: 'ms' },
-  taskcpu:   { label: 'CPU it is on',      domain: 'task', get: (r) => r.cpu,                  unit: '' },
-  util:      { label: 'Fair utilization',  domain: 'cpu',  get: (r) => r.cfs_util_avg,         unit: '' },
-  load:      { label: 'Fair load avg',     domain: 'cpu',  get: (r) => r.cfs_load_avg,         unit: '' },
-  nrrunning: { label: 'Runnable tasks',    domain: 'cpu',  get: (r) => r.nr_running,           unit: '' },
-};
+
 const CHART_H = 116;
-const STEPPED = uPlot.paths.stepped({ align: 1 });   // hold the value, then jump: for identities and counts
 const LANE_INSET = 0.12;   // the gap above and below a row's bars, as a fraction of the row
 // A row that is a gridline makes a lane look like a near miss: the task is *at* cpu1, not just
 // above it. So a lanes figure draws each CPU as a band instead, and its lanes sit inside one.
@@ -228,17 +217,15 @@ function drawRows(u2) {
 }
 
 // The series for the current metric: [key, label, colour], a line each.
-const seriesOf = (m) => m.domain === 'task'
+const seriesOf = (fig) => fig.domain === 'task'
   ? tasks.map(t => [t.id, String(t.id), colorOf(t.id)])
   : Array.from({ length: ncpus }, (_, i) => [i + 1, `cpu${i + 1}`, `hsl(${(i * 97) % 360}, 45%, 45%)`]);
-// The metric for one series at one tick, read according to `mode`; undefined where there is no record
-function sample(m, mode, key, tick, first) {
-  const field = m.domain === 'task' ? 'tasks' : 'cpus';
-  const v = (t) => { const r = snapshots[t]?.[field].get(key); return r === undefined ? undefined : m.get(r); };
-  const now = v(tick);
-  if (now === undefined) return undefined;
-  if (mode === 'value') return now;
-  return now - (v(first) ?? now);   // since: growth across the window
+// The metric for one series at one tick; undefined where there is no record, which draws a gap.
+// Values are the kernel's own, not offsets from anything: the axis then means what the Tasks and
+// CPUs tables mean, and a number does not change because the window was scrolled.
+function sample(fig, key, tick) {
+  const r = snapshots[tick]?.[fig.domain === 'task' ? 'tasks' : 'cpus'].get(key);
+  return r === undefined ? undefined : fig.get(r);
 }
 
 // ---- figures: the charts worth drawing, each a metric read one way ----
@@ -246,19 +233,19 @@ function sample(m, mode, key, tick, first) {
 // handful of those combinations answer a question anyone asks, so those get a title and an
 // explanation and the rest are not offered. Adding a figure is an entry here, and nothing else.
 const FIGURES = {
-  placement: { title: 'Placement', metric: 'taskcpu', mode: 'value', integer: true, invert: true, step: true, lanes: true,
+  placement: { title: 'Placement', domain: 'task', get: (r) => r.cpu, integer: true, invert: true, lanes: true,
     note: 'each CPU\u2019s row shared out among the tasks on it at that tick, in their own colours: solid is the one that ran, faint the ones queued behind it' },
-  cputime:   { title: 'CPU time', metric: 'runtime', mode: 'since',
+  cputime:   { title: 'CPU time', domain: 'task', get: (r) => NS(r.sum_exec_runtime),
     note: 'slope is that task’s share of the machine: parallel lines are an even split, a fan is a weighted one, a flat line is a task getting nothing' },
-  vruntime:  { title: 'Virtual runtime', metric: 'vruntime', mode: 'since',
+  vruntime:  { title: 'Virtual runtime', domain: 'task', get: (r) => NS(r.vruntime),
     note: 'runtime divided by weight, so under a fair split every task’s line climbs at the same rate whatever its nice' },
-  deadline:  { title: 'Deadline', metric: 'deadline', mode: 'value',
+  deadline:  { title: 'Deadline', domain: 'task', get: (r) => NS(r.deadline),
     note: 'EEVDF runs the eligible task with the earliest deadline, so the lowest line is the one that should be running' },
-  queues:    { title: 'Runnable tasks', metric: 'nrrunning', mode: 'value', integer: true,
+  queues:    { title: 'Runnable tasks', domain: 'cpu',  get: (r) => r.nr_running, integer: true,
     note: 'the balancer’s own view: it moves work to even these out, per unit of capacity rather than per task' },
-  util:      { title: 'Fair utilization', metric: 'util', mode: 'value',
+  util:      { title: 'Fair utilization', domain: 'cpu',  get: (r) => r.cfs_util_avg,
     note: 'PELT, where 1024 is a full CPU; it is frequency-invariant, so it says what the work would need at full speed' },
-  load:      { title: 'Fair load', metric: 'load', mode: 'value',
+  load:      { title: 'Fair load', domain: 'cpu',  get: (r) => r.cfs_load_avg,
     note: 'weighted demand, not a task count: nice changes it without any task appearing or leaving' },
 };
 
@@ -289,8 +276,7 @@ const uplotOpts = (W, series, ch) => { const fig = ch.fig; return {
     y: { dir: fig.invert ? -1 : 1,
          range: (u2, lo, hi) => {
            if (fig.integer) return [Math.round(lo) - 0.5, Math.round(hi) + 0.5];   // whole rows, lanes and all
-           const base = fig.mode === 'value' ? lo : Math.min(0, lo);
-           return hi === base ? [base, base + 1] : uPlot.rangeNum(base, hi, 0.1, true);
+           return hi === lo ? [lo, lo + 1] : uPlot.rangeNum(lo, hi, 0.1, true);
          } },
   },
   axes: [
@@ -303,7 +289,7 @@ const uplotOpts = (W, series, ch) => { const fig = ch.fig; return {
   // An identity or a count holds its value until it changes; joining the samples with a diagonal
   // would draw a task drifting between two CPUs, which never happens. Steps say what took place.
   series: [{ label: 'tick' }, ...series.map(([, label, color]) =>
-    ({ label, stroke: color, width: 1.5, spanGaps: false, ...(fig.step ? { paths: STEPPED } : {}),
+    ({ label, stroke: color, width: 1.5, spanGaps: false,
        ...(fig.lanes ? { stroke: 'transparent', width: 0, points: { show: false } } : {}) }))],
 }; };
 
@@ -330,7 +316,7 @@ const saveCharts = () => {
 };
 
 function drawOne(ch, first, last, W) {
-  const m = METRICS[ch.fig.metric], series = seriesOf(m);
+  const series = seriesOf(ch.fig);
   const xs = [], ys = series.map(() => []);
   // A lanes figure also records whether the task was actually on the CPU at that tick or only
   // queued there, which is the difference between the solid blocks and the faint ones.
@@ -338,7 +324,7 @@ function drawOne(ch, first, last, W) {
   for (let c = first; c < last; c++) {
     xs.push(c);
     series.forEach(([key], i) => {
-      const v = sample(m, ch.fig.mode, key, c, first);
+      const v = sample(ch.fig, key, c);
       ys[i].push(v === undefined ? null : v);
       if (ran) ran[i].push(snapshots[c]?.tasks.get(key)?.state === 'running');
     });
@@ -389,7 +375,7 @@ const picks = new Map();
     const name = document.createElement('span'); name.className = 'pick-label'; name.textContent = label;
     row.append(name);
     for (const [id, f] of Object.entries(FIGURES)) {
-      if (METRICS[f.metric].domain !== domain) continue;
+      if (f.domain !== domain) continue;
       const chip = document.createElement('label'), box = document.createElement('input');
       chip.className = 'chip'; chip.title = f.note;
       box.type = 'checkbox';
@@ -652,6 +638,12 @@ function renderDomains() {
     seen.get(key).per.push(d);
   }
   const rows = [...seen.values()].sort((a, b) => a.depth - b.depth || lowestCpu(a.span) - lowestCpu(b.span));
+  // Most SD_* flags are on every level -- six of seven, typically -- so they say nothing about any
+  // one of them. Only the flags that tell a level apart are worth a chip; the rest go on hover.
+  // ASYM_* is always shown, because a machine where every level is asymmetric is the interesting
+  // case, not a reason to hide it.
+  const sets = rows.map((d) => new Set(d.flags ? d.flags.split(', ') : []));
+  const common = sets.length ? [...sets[0]].filter((f) => sets.every((g) => g.has(f))) : [];
   tb.replaceChildren();
   for (const d of rows) {
     const tr = tb.insertRow();
@@ -667,24 +659,29 @@ function renderDomains() {
       gs.append(el);
     }
     const fl = tr.insertCell();
-    for (const f of d.flags ? d.flags.split(', ') : []) {
+    const all = d.flags ? d.flags.split(', ') : [];
+    const own = all.filter((f) => f.startsWith('ASYM') || !common.includes(f));
+    for (const f of own) {
       const el = document.createElement('span');
       el.className = f.startsWith('ASYM') ? 'flag asym' : 'flag';   // asymmetry is the one worth spotting
       el.textContent = f; fl.append(el);
     }
-    const iv = tr.insertCell(); iv.className = 'num'; iv.textContent = d.balance_interval;
-    iv.title = `imbalance_pct ${d.imbalance_pct}, busy_factor ${d.busy_factor}, cache_nice_tries ${d.cache_nice_tries}`;
-    // per-CPU counters: the most recent balance, and the worst failure streak, across the span
+    if (!own.length) { fl.className = 'num'; fl.textContent = '\u2014'; }
+    fl.title = all.length ? `${d.name}: ${all.join(', ')}` + (common.length ? `\n\nOn every level here: ${common.join(', ')}` : '') : '';
+    // How often this level balances, how long ago it last did, and -- only when there are any --
+    // how many attempts failed. One column: they are one story, and two of the three read 0, or the
+    // same on every CPU, most of the time. The per-CPU spread goes on hover.
     const each = (f) => d.per.map(p => `cpu${p.cpu}: ${f(p)}`).join('\n');
-    const ago = tr.insertCell(); ago.className = 'num';
-    ago.textContent = `${Math.min(...d.per.map(p => p.last_balance_ago))} ago`;
-    ago.title = each(p => `${p.last_balance_ago} ticks ago`);
+    const ago = Math.min(...d.per.map(p => p.last_balance_ago));
     const failed = Math.max(...d.per.map(p => p.nr_balance_failed));
-    const fc = tr.insertCell(); fc.className = 'num';
-    fc.textContent = failed || '—';
+    const bal = tr.insertCell(); bal.className = 'num';
+    bal.textContent = `every ${d.balance_interval}, last ${ago} ago` + (failed ? `, ${failed} failed` : '');
     // the threshold the kernel escalates at, so a row on the edge of active balancing stands out
-    if (failed > d.cache_nice_tries + 2) fc.classList.add('hot');
-    fc.title = each(p => p.nr_balance_failed) + `\nactive balancing past ${d.cache_nice_tries + 2}`;
+    if (failed > d.cache_nice_tries + 2) bal.classList.add('hot');
+    bal.title = `interval ${d.balance_interval} ticks, imbalance_pct ${d.imbalance_pct}, `
+      + `busy_factor ${d.busy_factor}, cache_nice_tries ${d.cache_nice_tries}\n\n`
+      + each(p => `${p.last_balance_ago} ticks ago, ${p.nr_balance_failed} failed`)
+      + `\n\nactive balancing past ${d.cache_nice_tries + 2} failures`;
   }
   // The levels asked for that the kernel collapsed away: the page knows what it sent.
   const built = new Set(rows.map(d => d.name));
@@ -967,13 +964,13 @@ const SCENARIOS = {
     text: 'Three equal tasks on one CPU. EEVDF runs them in turn, one slice each, and the pattern repeats; runtime and vruntime grow at the same rate for all three.' },
   nice: { title: 'Weighted round robin', charts: ['placement', 'cputime', 'vruntime'],
     script: [...m_([[core(1)]]), 'create 3', 'nice 1 -5', 'nice 3 5'],
-    text: 'One CPU, three tasks at nice -5, 0 and 5 (weights 3121, 1024, 335). CPU time is shared by weight: task 1 (nice -5) gets about three slices for each one of task 2\u2019s, task 3 (nice 5) about a third. Compare the runtime column; vruntime still advances evenly, because it is runtime divided by weight.' },
+    text: 'One CPU, three tasks at nice -5, 0 and 5 (weights 3121, 1024, 335). CPU time is shared by weight: task 1 (nice -5) gets about three slices for each one of task 2\u2019s, task 3 (nice 5) about a third. CPU time fans out three ways; Virtual runtime does not, because it is runtime divided by weight.' },
   two: { title: 'Two CPUs', charts: ['placement', 'queues'],
     script: [...m_([[core(1), core(1)]]), 'create 6'],
     text: 'Six equal tasks on two equal CPUs. Wakeup placement at creation leaves five on cpu1 and one on cpu2. The periodic balancer then moves one task at a time, roughly every 140 ticks, until the split is 3 : 3. Balancing is slow and stepwise, not instant; compare Big and little cores, where it stops earlier on purpose.' },
   balance: { title: 'Load balancing', charts: ['placement', 'queues'],
     script: [...m_([[core(1), core(1)]]), 'create 4', 'affinity * 1', 'tick 10', 'affinity * 1-2'],
-    text: 'Four tasks start pinned to cpu1 while cpu2 idles; after ten ticks they may run on either CPU. cpu2\u2019s balancer (dashed marks) looks for work at each balance interval and after a while pulls two tasks over in one go (bars at the start of their slices). Nothing moves immediately: balancing is periodic, not instant.' },
+    text: 'Four tasks start pinned to cpu1 while cpu2 idles; after ten ticks they may run on either CPU. In Placement all four lanes sit in cpu1’s row, sharing it; cpu2’s balancer looks for work only at its balance interval, and after a while pulls two of them across in one go. Runnable tasks shows the same moment as 4 : 0 becoming 2 : 2. Nothing moves immediately: balancing is periodic, not instant.' },
   groups: { title: 'Cgroup fairness', charts: ['placement', 'cputime'],
     script: [...m_([[core(1)]]), 'create 4', 'cgroup-create /a', 'cgroup-create /b',
              'cgroup-attach /a 1', 'cgroup-attach /b 2', 'cgroup-attach /b 3', 'cgroup-attach /b 4'],

@@ -20,7 +20,6 @@ th, td { border-bottom: 1px solid color-mix(in srgb, GrayText 40%, transparent);
 th { font-weight: 600; }
 td button { padding: 0 .5rem; font-size: .8rem; }
 #status { color: GrayText; font-weight: normal; font-variant-numeric: tabular-nums; margin-left: .4rem; }
-#status.ok { color: green; }
 #status.bad { color: crimson; }
 #panes { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; margin-top: 1.4rem; }
 @media (max-width: 800px) { #panes { grid-template-columns: 1fr; } }

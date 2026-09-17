@@ -146,25 +146,25 @@
 <table id="cpu-stats"><thead><tr><th>CPU</th><th title="What the hardware is, on a scale where 1024 is a full CPU, as the kernel reports it. Set it per cluster in Layout, below; it takes effect at boot.">Capacity</th><th title="Current frequency on the same 1024 scale, as cpufreq would move it under a running system. Sent as one cpu-freq line for every CPU, since the driver takes full state.">Frequency</th><th>Task</th><th title="Runqueue nr_running, including the running task; delayed dequeue can affect this count">Runnable</th><th title="Fair-class PELT utilization, on a scale where 1024 is a full CPU. Excludes real-time and deadline classes.">Fair utilization</th><th title="Fair-class weighted demand (PELT), not a task count">Fair load avg</th><th title="Fair-class PELT runnable demand; 1024 per fully runnable task">Fair runnable avg</th><th title="Root fair queue virtual clock; unavailable on kernels that removed this counter">Min vruntime ms</th><th title="Kernel cumulative context-switch counter">Context switches</th></tr></thead><tbody></tbody></table>
 </div>
 
+
 <h3>Sched domains</h3>
 <p class="hint">What the kernel built from the layout, innermost level first &mdash; not what was asked for. Linux drops a level whose span adds nothing over its child, so a level named in <code>cpu-topo</code> can be missing here; the balancer only walks what is left. <span id="domains-collapsed"></span></p>
 <div class="table-scroll" role="region" aria-label="Sched domains" tabindex="0">
 <table id="domain-table"><thead><tr>
   <th>Level</th><th>Span</th>
   <th title="The balancing groups this level is divided into, with each group's total capacity. A CPU's load balancer compares its own group against the others; the order is per CPU (its own group first), so they are listed lowest CPU first here.">Groups</th>
-  <th title="SD_* flags the kernel set on this domain, as it names them. These decide which balancing paths run at this level.">Flags</th>
-  <th title="Ticks between periodic balancing at this level (sd->balance_interval), scaled by busy_factor when the CPU is busy">Interval</th>
-  <th title="Ticks since a CPU in this domain last ran the periodic balancer here (the most recent one; hover for each CPU)">Last balance</th>
-  <th title="Consecutive failed balance attempts (sd->nr_balance_failed). Once this passes cache_nice_tries + 2 the balancer escalates to active balancing, migrating a task that is currently running.">Failed</th>
+  <th title="The SD_* flags that tell this level apart: the ones every level shares are left out, since they say nothing about this one. Hover a cell for the full set.">Flags</th>
+  <th title="How often this level balances and how long ago it last did. sd->balance_interval in ticks, scaled by busy_factor when the CPU is busy, and the most recent balance across the span. Failed attempts appear once there are any: past cache_nice_tries + 2 the balancer escalates to active balancing, migrating a task that is currently running. Hover a cell for each CPU.">Balancing</th>
 </tr></thead><tbody></tbody></table>
 </div>
 
-<details id="cpu-editor" open><summary>Layout <span id="cpu-draft" class="hint"></span></summary>
+<details id="cpu-editor"><summary>Layout <span id="cpu-draft" class="hint"></span></summary>
 <p>Describe the machine: what kinds of core it has, and how they are grouped. A cluster is a shared cache; cores in one cluster need not be alike, which is what an arm64 DSU looks like. This decides how many CPUs the VM boots with, so changing it restarts and resets tasks, cgroups, and the charts.</p>
 <div id="cpu-layout"></div>
 <p class="hint">Each thread is one CPU, numbered cpu1 upwards across the tree; cpu0 runs the driver and is kept out of the scheduler's reach. Capacity is the hardware, so it is applied at boot; frequency, in the CPUs table, changes while it runs.</p>
 <p id="cpu-hint" class="hint" role="status"></p>
 <div id="cpu-actions"><span id="ncpus-label"></span><button id="boot">Restart with these CPUs</button><button id="discard-cpus">Discard changes</button></div>
+
 </details>
 </section>
 
