@@ -46,7 +46,7 @@ export function qemuArgs({ smp, mem, params = {} }) {
 // its records are and how many fit, so nothing here hardcodes a stride or an offset. Only magic,
 // layout and gen sit at fixed places. LAYOUT is bumped by the kmod when a record's fields change
 // meaning without changing its size -- everything that resizes is already caught by the strides.
-const MAGIC = 0x5054536b, LAYOUT = 1;
+const MAGIC = 0x5054536b, LAYOUT = 2;
 const HDR_SIZE = 96;       // the header itself; a change here bumps LAYOUT
 const SHM_MAX = 1 << 20;   // a sanity bound on what the header may claim, before we map it
 const TASK_STATES = ['running', 'runnable', 'sleeping', 'blocked'];
@@ -79,7 +79,10 @@ function decodeShm(view, bytes, L) {
     const u32 = (o) => view.getUint32(o, true), u64 = (o) => Number(view.getBigUint64(o, true));
     const cpus = Array.from({ length: ncpus }, (_, i) => { const o = L.cpuOff + i * L.cpuStride; return {
       cpu: u32(o), current: u32(o + 4), idle: !!u32(o + 8), capacity: u32(o + 12), freq: u32(o + 16), nr_running: u64(o + 24), nr_switches: u64(o + 32),
-      min_vruntime: u64(o + 40), cfs_util_avg: u64(o + 48), cfs_load_avg: u64(o + 56), cfs_runnable_avg: u64(o + 64) }; });
+      min_vruntime: u64(o + 40), cfs_util_avg: u64(o + 48), cfs_load_avg: u64(o + 56), cfs_runnable_avg: u64(o + 64),
+      // what the balancer reads, as against what the runqueue holds
+      h_nr_runnable: u64(o + 72), overloaded: !!(u32(o + 80) & 1), overutilized: !!(u32(o + 80) & 2),
+      next_balance_in: u32(o + 84) }; });
     const tasks = Array.from({ length: ntasks }, (_, i) => { const o = L.taskOff + i * L.taskStride; const flags = u32(o + 20); return {
       task: u32(o), state: TASK_STATES[u32(o + 4)], cpu: u32(o + 8), policy: POLICIES[u32(o + 12)] ?? '?', nice: view.getInt32(o + 16, true),
       eligible: !!(flags & 1), delayed: !!(flags & 2), cpus: u64(o + 24), weight: u64(o + 32), sum_exec_runtime: u64(o + 40), vruntime: u64(o + 48),

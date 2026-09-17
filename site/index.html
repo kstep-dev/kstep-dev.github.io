@@ -12,6 +12,10 @@
   td input.bad { border-color: crimson; color: crimson; }
   td select { padding: 0 .2rem; font-size: .85rem; }
   #tasks th, #tasks td { text-align: right; font-variant-numeric: tabular-nums; }
+  /* the button that adds a row lines up under the row actions, so every button in the table
+     is in one column; the foot goes with it while the VM is booting and the button is hidden */
+  #tasks tfoot td { text-align: right; }
+  #tasks tfoot:not(:has(#create:not([hidden]))) { display: none; }
   #tasks th:first-child, #tasks td:first-child { text-align: left; }
   #cpu-hint { margin: 0; }
   #groups th, #groups td { text-align: left; }
@@ -24,7 +28,8 @@
   #legend { margin: .3rem 0 0; font-size: .85rem; }
   #cpu-hint:empty { display: none; }
   #cpu-hint.bad { color: crimson; }
-  #clock { display: flex; gap: .5rem; align-items: center; }
+  #clock { display: inline-flex; gap: .5rem; align-items: center; font-size: 1rem; font-weight: normal; }
+  #tick-count { color: GrayText; font-size: .85rem; font-variant-numeric: tabular-nums; }
   #figure-picks { margin: 0 0 .7rem; display: flex; flex-direction: column; gap: .3rem; }
   .pick-row { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
   .pick-row > .pick-label { color: GrayText; font-size: .8rem; width: 4.2rem; flex: none; }
@@ -39,6 +44,39 @@
   .chart { border: 1px solid GrayText; margin-bottom: .5rem; }
   .chart-head { display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap; padding: .3rem .4rem 0; font-size: .85rem; color: GrayText; }
   .chart-head b { color: CanvasText; font-weight: 600; }
+  /* the cgroup tree, drawn the way the machine is: every box is the cgroup it draws, and a box
+     sits inside its parent, because that is how weight is applied -- between siblings, then within */
+  /* the tree is laid out like the machine editor: a box is as wide as what is in it, and
+     siblings sit side by side, so the nesting is read from containment rather than indentation */
+  #cgroup-tree { margin: .3rem 0 .6rem; display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-start; }
+  .cg { border: 1px solid GrayText; border-radius: .35rem; padding: .35rem .45rem; width: fit-content; }
+  .cg.root { border-style: dashed; }
+  .cg > header { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; font-size: .8rem; color: GrayText; }
+  .cg > header .path { font-weight: 600; color: CanvasText; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .cg > header input[type=number] { width: 3.4rem; }
+  .cg > header button { padding: 0 .35rem; font-size: .7rem; line-height: 1.5; }
+  .cg > header > .rm { margin-left: auto; }
+  .cg > header > span { display: inline-flex; }
+  /* every setting says what it is, so a row of checkboxes is not left to be guessed at,
+     and one per line keeps the labels aligned down the box */
+  .cg > .settings { display: flex; flex-direction: column; align-items: flex-start; gap: .15rem;
+    font-size: .8rem; color: GrayText; }
+  .cg > .settings:not(:empty) { margin-top: .25rem; }
+  .cg .field { display: inline-flex; align-items: center; gap: .25rem; }
+  .cg .field > .f-label { min-width: 3.1rem; }
+  .cg .field > .f-label::after { content: ':'; }
+  .cg .members { display: flex; flex-wrap: wrap; gap: .25rem; margin-top: .3rem; min-height: 1.1rem; }
+  .cg .members:empty::before { content: 'no tasks'; color: GrayText; font-size: .75rem; }
+  .cg.drop .members:empty::before { content: 'drop here'; color: AccentColor; }
+  .cg .kids { display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-start; }
+  .cg .kids:not(:empty) { margin-top: .3rem; }
+  /* the box you would drop into, named while the drag is on rather than after it lands */
+  .cg.drop { border-color: AccentColor; background: color-mix(in srgb, AccentColor 12%, Canvas); }
+  .cg.drop > .kids > .cg { background: Canvas; }
+  .task-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 1.4rem;
+    padding: 0 .3rem; border-radius: .25rem; font-size: .75rem; color: #fff; font-variant-numeric: tabular-nums;
+    cursor: grab; user-select: none; }
+  .task-chip:active { cursor: grabbing; }
   .chart-head .note { flex: 1 1 12rem; min-width: 0; }
   /* uPlot follows the page's system colours instead of its own light-mode defaults */
   .uplot .u-axis, .u-legend { color: CanvasText; }
@@ -65,6 +103,7 @@
   #domains-collapsed { color: GrayText; }
   #cpu-stats { white-space: nowrap; }
   #cpu-stats th { text-align: left; }
+  #rd-state { font-size: .85rem; font-weight: normal; }
   #cpu-stats td { font-variant-numeric: tabular-nums; }
   #cpu-editor { margin: 1.2rem 0 .2rem; border-top: 1px solid color-mix(in srgb, GrayText 35%, transparent); padding-top: .6rem; }
   #cpu-editor summary { cursor: pointer; font-weight: 600; }
@@ -111,6 +150,7 @@
 </header>
 <p>kSTEP (<a href="assets/paper-osdi26.pdf">OSDI ’26</a>) runs the unmodified Linux CPU scheduler deterministically, one tick at a time, on CPUs it isolates. A Linux kernel boots below when the page loads, with kSTEP holding its scheduler clock. Nothing happens in it except what you ask for: create tasks, change their nice value or affinity, pause or kill them, pick the machine's topology, and advance the scheduler one tick at a time.</p>
 
+<section id="playground" aria-label="playground">
 <nav id="scenarios" aria-label="scenarios"></nav>
 <p id="scenario-text"></p>
 
@@ -123,27 +163,36 @@
 </details>
 
 
-<h2>Charts <span><span id="clock" hidden><label><input id="speed" type="number" min="0" max="1000" step="10" value="20" style="width:4.2rem" title="ticks per second; 0 stops the clock"> ticks/s</label>
-  <button id="step" title="stop the clock and advance exactly one tick">step</button></span></span></h2>
+<h2>Charts <span id="clock" hidden><label><input id="speed" type="number" min="0" max="1000" step="10" value="20" style="width:4.2rem" title="ticks per second; 0 stops the clock"> ticks/s</label>
+  <button id="step" title="stop the clock and advance exactly one tick">step</button><span id="tick-count"></span></span></h2>
 <div id="figure-picks"></div>
 <p class="hint" id="legend">One column per tick, newest on the right. Hover for values; wheel to pan back through the run, ctrl (or ⌘) wheel to zoom.</p>
 <div id="charts"></div>
 
-<h2>Tasks <span><button id="create" hidden>create task</button></span></h2>
+<h2>Tasks</h2>
 <div class="table-scroll" role="region" aria-label="Tasks" tabindex="0">
-<table id="tasks"><thead><tr><th></th><th>task</th><th>state</th><th>cpu</th><th>affinity</th><th>nice</th><th>policy</th><th title="The task's share of the CPU, from its nice value: 1024 is nice 0">weight</th><th title="sum_exec_runtime: CPU time this task has actually been given, in milliseconds of real time">cpu time</th><th title="Milliseconds of virtual time, not wall clock: CPU time divided by the task's share, so a heavier task's vruntime advances more slowly for the same CPU time. Fairness is every task's vruntime advancing equally.">vruntime</th><th title="vruntime plus this task's slice scaled by its weight, in the same virtual milliseconds: the key EEVDF picks by, so the lowest eligible one runs next.">deadline</th><th>cgroup</th><th></th></tr></thead><tbody></tbody></table>
+<table id="tasks"><thead><tr><th></th><th>task</th><th>state</th><th>cpu</th><th>affinity</th><th>nice</th><th>policy</th><th title="The task's share of the CPU, from its nice value: 1024 is nice 0">weight</th><th title="sum_exec_runtime: CPU time this task has actually been given, in milliseconds of real time">cpu time</th><th title="Milliseconds of virtual time, not wall clock: CPU time divided by the task's share, so a heavier task's vruntime advances more slowly for the same CPU time. Fairness is every task's vruntime advancing equally.">vruntime</th><th title="vruntime plus this task's slice scaled by its weight, in the same virtual milliseconds: the key EEVDF picks by, so the lowest eligible one runs next.">deadline</th><th title="The cgroup this task is in. To move it, drag its chip between the boxes under Cgroups.">cgroup</th><th></th></tr></thead><tbody></tbody><tfoot><tr><td colspan="13"><button id="create" hidden>create task</button></td></tr></tfoot></table>
 </div>
 
 <h2>Cgroups</h2>
-<div class="table-scroll" role="region" aria-label="Cgroups" tabindex="0">
-<table id="groups"><thead><tr><th>cgroup</th><th>weight</th><th>cpus</th><th>tasks</th><th></th></tr></thead><tbody></tbody></table>
-</div>
+<div id="cgroup-tree"></div>
 
 <section id="cpus" aria-labelledby="cpus-title">
 <h2 id="cpus-title">Machine <span id="running-cpus" class="hint"></span></h2>
-<h3>CPUs</h3>
+<h3>CPUs <span id="rd-state" class="hint"></span></h3>
 <div class="table-scroll" role="region" aria-label="CPU statistics" tabindex="0">
-<table id="cpu-stats"><thead><tr><th>CPU</th><th title="What the hardware is, on a scale where 1024 is a full CPU, as the kernel reports it. Set it per cluster in Layout, below; it takes effect at boot.">Capacity</th><th title="Current frequency on the same 1024 scale, as cpufreq would move it under a running system. Sent as one cpu-freq line for every CPU, since the driver takes full state.">Frequency</th><th>Task</th><th title="Runqueue nr_running, including the running task; delayed dequeue can affect this count">Runnable</th><th title="Fair-class PELT utilization, on a scale where 1024 is a full CPU. Excludes real-time and deadline classes.">Fair utilization</th><th title="Fair-class weighted demand (PELT), not a task count">Fair load avg</th><th title="Fair-class PELT runnable demand; 1024 per fully runnable task">Fair runnable avg</th><th title="Root fair queue virtual clock; unavailable on kernels that removed this counter">Min vruntime ms</th><th title="Kernel cumulative context-switch counter">Context switches</th></tr></thead><tbody></tbody></table>
+<table id="cpu-stats"><thead>
+<tr><th>CPU</th>
+  <th title="Current frequency on the scale where 1024 is a full CPU, as cpufreq would move it under a running system. Sent as one cpu-freq line for every CPU, since the driver takes full state. The hardware&#x27;s own capacity is set per cluster in Layout, below.">Frequency</th>
+  <th>Task</th>
+  <th title="PELT utilization of the fair class, on a scale where 1024 is a full CPU. Real-time and deadline tasks are not in it.">Utilization</th>
+  <th title="Weighted demand of the fair class (PELT), not a task count. Real-time and deadline tasks are not in it.">Load avg</th>
+  <th title="PELT runnable demand of the fair class; 1024 per fully runnable task. Real-time and deadline tasks are not in it.">Runnable avg</th>
+  <th title="Root fair queue virtual clock, in milliseconds of virtual time; unavailable on kernels that removed this counter">Min vruntime</th>
+  <th title="Kernel cumulative context-switch counter">Context switches</th>
+  <th title="cfs_rq h_nr_runnable: runnable tasks as the load balancer counts them, and the number it tries to even out. When the runqueue holds more than that — a real-time or deadline task, or one left queued by delayed dequeue — the raw rq->nr_running is shown after it in brackets.">Runnable</th>
+  <th title="Ticks until rq->next_balance falls due; 0 means this CPU will look for work to pull at the next tick.">Next balance</th>
+</tr></thead><tbody></tbody></table>
 </div>
 
 
@@ -151,10 +200,10 @@
 <p class="hint">What the kernel built from the layout, innermost level first &mdash; not what was asked for. Linux drops a level whose span adds nothing over its child, so a level named in <code>cpu-topo</code> can be missing here; the balancer only walks what is left. <span id="domains-collapsed"></span></p>
 <div class="table-scroll" role="region" aria-label="Sched domains" tabindex="0">
 <table id="domain-table"><thead><tr>
-  <th>Level</th><th>Span</th>
+  <th title="The topology level, innermost first. Its balancing knobs — interval, imbalance_pct, busy_factor, cache_nice_tries — are set per level and never move; hover a level to read them.">Level</th><th>Span</th>
   <th title="The balancing groups this level is divided into, with each group's total capacity. A CPU's load balancer compares its own group against the others; the order is per CPU (its own group first), so they are listed lowest CPU first here.">Groups</th>
   <th title="The SD_* flags that tell this level apart: the ones every level shares are left out, since they say nothing about this one. Hover a cell for the full set.">Flags</th>
-  <th title="How often this level balances and how long ago it last did. sd->balance_interval in ticks, scaled by busy_factor when the CPU is busy, and the most recent balance across the span. Failed attempts appear once there are any: past cache_nice_tries + 2 the balancer escalates to active balancing, migrating a task that is currently running. Hover a cell for each CPU.">Balancing</th>
+  <th title="How long ago this level last balanced, across its span, and how many attempts have failed in a row once there are any: past cache_nice_tries + 2 the balancer escalates to active balancing, migrating a task that is currently running. Hover a cell for the per-CPU spread and the interval.">Last balanced</th>
 </tr></thead><tbody></tbody></table>
 </div>
 
@@ -166,6 +215,7 @@
 <div id="cpu-actions"><span id="ncpus-label"></span><button id="boot">Restart with these CPUs</button><button id="discard-cpus">Discard changes</button></div>
 
 </details>
+</section>
 </section>
 
 <h2>Reproduced bugs</h2>

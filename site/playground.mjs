@@ -139,6 +139,7 @@ function panBy(ticks) {
 function draw() {
   computeWindow();
   drawCharts(layout);
+  $('tick-count').textContent = snapshots.length ? `tick ${snapshots.length}` : '';
 }
 
 // ---- figures: any per-task or per-CPU signal over the run's ticks ----
@@ -241,8 +242,8 @@ const FIGURES = {
     note: 'runtime divided by weight, so under a fair split every task’s line climbs at the same rate whatever its nice' },
   deadline:  { title: 'Deadline', domain: 'task', get: (r) => NS(r.deadline),
     note: 'EEVDF runs the eligible task with the earliest deadline, so the lowest line is the one that should be running' },
-  queues:    { title: 'Runnable tasks', domain: 'cpu',  get: (r) => r.nr_running, integer: true,
-    note: 'the balancer’s own view: it moves work to even these out, per unit of capacity rather than per task' },
+  queues:    { title: 'Runnable tasks', domain: 'cpu',  get: (r) => r.h_nr_runnable, integer: true,
+    note: 'the balancer’s own count, h_nr_runnable, which leaves out a task queued only by delayed dequeue: it moves work to even these out, per unit of capacity rather than per task' },
   util:      { title: 'Fair utilization', domain: 'cpu',  get: (r) => r.cfs_util_avg,
     note: 'PELT, where 1024 is a full CPU; it is frequency-invariant, so it says what the work would need at full speed' },
   load:      { title: 'Fair load', domain: 'cpu',  get: (r) => r.cfs_load_avg,
@@ -555,7 +556,7 @@ function setCpuDraft(m) {
 // cpufreq does to it while the machine runs. Each driver line carries the whole set, because the
 // kmod's spec is full state and not a delta -- an unnamed CPU goes back to 1024.
 const SCALES = [1024, 768, 512, 256, 128];
-const CAP = 1, FREQ = 2;   // capacity is shown; frequency is the one that can be changed here
+const FREQ = 1;   // the one hardware number that moves while it runs, so the only one here
 const cellSelect = (cpu, col) => $('cpu-stats').tBodies[0].rows[cpu - 1]?.cells[col].firstChild;
 const scaleSpec = (col) => Array.from({ length: ncpus }, (_, i) => `${i + 1}=${cellSelect(i + 1, col)?.value ?? 1024}`).join();
 function scaleSelect(cpu, col) {
@@ -586,6 +587,14 @@ function renderCpus() {
   const clusters = machine.sockets.reduce((n, cl) => n + cl.length, 0);
   const sockets = machine.sockets.length;
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  // rd->overloaded and rd->overutilized are the root domain's, the same for every CPU here, so
+  // they are said once above the table rather than repeated down a column.
+  const any = cpuRecords.get(1);
+  $('rd-state').textContent = !any ? '' : [
+    any.overloaded ? 'overloaded' : 'not overloaded',
+    any.overutilized ? 'overutilized' : 'not overutilized'].join(' · ');
+  $('rd-state').title = 'rd->overloaded: some CPU has more than one runnable task, so an idle CPU will go looking.'
+    + ' rd->overutilized: a CPU is near its capacity, which turns energy-aware placement off and periodic balancing on.';
   $('running-cpus').textContent = `· ${plural(ncpus, 'CPU')} · ${plural(cores, 'core')}`
     + (clusters > 1 ? ` · ${plural(clusters, 'cluster')}` : '')
     + (sockets > 1 ? ` · ${plural(sockets, 'socket')}` : '');
@@ -595,15 +604,22 @@ function renderCpus() {
     let tr = tb.rows[cpu - 1];
     if (!tr) {
       tr = tb.insertRow();
-      for (let i = 0; i < 10; i++) tr.insertCell();
+      for (let i = 0; i < 10; i++) tr.insertCell();   // one per <th> in the head
       tr.cells[0].textContent = `cpu${cpu}`;
       tr.cells[FREQ].append(scaleSelect(cpu, FREQ));
     }
-    tr.cells[CAP].textContent = r?.capacity ?? '—';
     scaleSync(tr.cells[FREQ].firstChild, r?.freq);   // the kernel's value, so a driver line shows up
+    // The balancer's own count, and the runqueue's raw depth after it when the two disagree --
+    // which is the whole reason to have both: what is on the queue and not in the balancer's
+    // number is a real-time or deadline task, or one the delayed dequeue has yet to let go.
+    const runnable = r?.h_nr_runnable === undefined ? '—'
+      : r.nr_running === r.h_nr_runnable ? r.h_nr_runnable : `${r.h_nr_runnable} (${r.nr_running} queued)`;
     const values = [
-      !r ? '—' : r.idle ? 'idle' : r.current ? r.current : 'system task', r?.nr_running ?? '—', r?.cfs_util_avg ?? '—',
-      r?.cfs_load_avg ?? '—', r?.cfs_runnable_avg ?? '—', r?.min_vruntime === undefined ? '—' : ms(r.min_vruntime), r?.nr_switches ?? '—'];
+      !r ? '—' : r.idle ? 'idle' : r.current ? r.current : 'system task',
+      r?.cfs_util_avg ?? '—', r?.cfs_load_avg ?? '—', r?.cfs_runnable_avg ?? '—',
+      r?.min_vruntime === undefined ? '—' : ms(r.min_vruntime), r?.nr_switches ?? '—',
+      runnable,
+      r?.next_balance_in === undefined ? '—' : r.next_balance_in === 0 ? 'due' : r.next_balance_in];
     values.forEach((v, i) => tr.cells[i + FREQ + 1].textContent = v);
   }
 }
@@ -647,7 +663,12 @@ function renderDomains() {
   tb.replaceChildren();
   for (const d of rows) {
     const tr = tb.insertRow();
-    tr.insertCell().innerHTML = `<span class="lvl">${d.name}</span>`;
+    const lvl = tr.insertCell();
+    lvl.innerHTML = `<span class="lvl">${d.name}</span>`;
+    // the knobs are the level's, set when the domain was built and fixed from then on, so they
+    // belong to the name rather than to a column that would read the same on every tick
+    lvl.title = `interval ${d.balance_interval} ticks, imbalance_pct ${d.imbalance_pct}, `
+      + `busy_factor ${d.busy_factor}, cache_nice_tries ${d.cache_nice_tries}`;
     tr.insertCell().innerHTML = `<span class="span">${cpulist(d.span)}</span>`;
     const gs = tr.insertCell();
     for (const g of [...d.groups].sort((a, b) => lowestCpu(a.span) - lowestCpu(b.span))) {
@@ -668,14 +689,14 @@ function renderDomains() {
     }
     if (!own.length) { fl.className = 'num'; fl.textContent = '\u2014'; }
     fl.title = all.length ? `${d.name}: ${all.join(', ')}` + (common.length ? `\n\nOn every level here: ${common.join(', ')}` : '') : '';
-    // How often this level balances, how long ago it last did, and -- only when there are any --
-    // how many attempts failed. One column: they are one story, and two of the three read 0, or the
-    // same on every CPU, most of the time. The per-CPU spread goes on hover.
+    // How long ago this level last balanced and -- only when there are any -- how many attempts
+    // failed: the two that move. The interval that sets the pace is the level's, not the tick's,
+    // so it is read off the level's name; the per-CPU spread goes on hover.
     const each = (f) => d.per.map(p => `cpu${p.cpu}: ${f(p)}`).join('\n');
     const ago = Math.min(...d.per.map(p => p.last_balance_ago));
     const failed = Math.max(...d.per.map(p => p.nr_balance_failed));
     const bal = tr.insertCell(); bal.className = 'num';
-    bal.textContent = `every ${d.balance_interval}, last ${ago} ago` + (failed ? `, ${failed} failed` : '');
+    bal.textContent = `${ago} ticks ago` + (failed ? `, ${failed} failed` : '');
     // the threshold the kernel escalates at, so a row on the edge of active balancing stands out
     if (failed > d.cache_nice_tries + 2) bal.classList.add('hot');
     bal.title = `interval ${d.balance_interval} ticks, imbalance_pct ${d.imbalance_pct}, `
@@ -763,8 +784,15 @@ const AFF_TITLE = 'CPUs the task may run on';
 // directly, and a cgroup's cpuset narrows a task's CPUs -- so the kernel's value has to be
 // able to flow back in. Skip a control the user is in the middle of: focused, or with an edit
 // still in flight. A rejected edit is dropped: the next snapshot puts the kernel's value back.
+// The focus guard is for a value being typed, which a refresh would overwrite mid-keystroke. A
+// checkbox has no half-finished state -- the click is the whole of the intent and it went to the
+// kernel as it happened -- so a mask still takes the kernel's answer while it holds focus, and
+// what the kernel made of the set shows up on the click rather than on the way out of the cell.
+// `pending` still covers the flight, so nothing flashes the old set in between.
 const sync = (el, v) => {
-  if (v === undefined || el.contains(document.activeElement) || el.dataset.pending) return;
+  const focused = document.activeElement;
+  if (v === undefined || el.dataset.pending) return;
+  if (el.contains(focused) && focused?.type !== 'checkbox') return;
   el.value = v;
 };
 // A CPU set as one checkbox per CPU 1..ncpus; `value` is the bitmask the shared region reports, `list` the
@@ -822,10 +850,6 @@ function renderTask(t) {
     tr.cells[POL].append(pol);
     const aff = cpuMask(AFF_TITLE, (want) => `affinity ${t.id} ${want}`);
     tr.cells[AFF].append(aff);
-    // cgroup: a select over the root and the cgroups created so far
-    const grp = document.createElement('select'); grp.title = 'cgroup of the task';
-    onSet(grp, 'cgroup-attach', ` ${t.id}`);
-    tr.cells[GRP].append(grp);
     // pause / wake (label follows the task's state) and kill
     const pause = document.createElement('button'); pause.textContent = 'pause';
     pause.onclick = () => enqueue(() => cmd(`${pause.textContent} ${t.id}`));
@@ -837,12 +861,9 @@ function renderTask(t) {
   sync(tr.cells[NICE].firstElementChild, s.nice);
   sync(tr.cells[POL].firstElementChild, s.policy);
   sync(tr.cells[AFF].firstElementChild, s.cpus);
-  // the cgroup select offers the root and every cgroup the kernel reports; rebuilding its options
-  // clears the selection, so set it from the kernel afterwards
-  const grp = tr.cells[GRP].firstElementChild, want = groupPaths();
-  if ([...grp.options].map(o => o.value).join() !== want.join())
-    grp.replaceChildren(...want.map(g => new Option(g, g)));
-  sync(grp, s.cgroup);
+  // the cgroup is reported, not set here: a task is moved by dragging its chip in the tree, which
+  // is the one place the move can be seen against the nesting that gives it its meaning
+  if (s.cgroup !== undefined && tr.cells[GRP].textContent !== s.cgroup) tr.cells[GRP].textContent = s.cgroup;
   if (s.state !== undefined) tr.cells[ACT].firstElementChild.textContent = s.state === 'running' || s.state === 'runnable' ? 'pause' : 'wake';
   [t.id, s.state ?? '', s.cpu, undefined, undefined, undefined, s.weight, ms(s.sum_exec_runtime), ms(s.vruntime), ms(s.deadline)]
     .forEach((v, i) => { if (v === undefined) return; const text = String(v); if (tr.cells[i + 1].textContent !== text) tr.cells[i + 1].textContent = text; });
@@ -860,37 +881,125 @@ async function newGroup(parent) {
 // The kernel refuses a cgroup that still has tasks or children, and says so in the transcript.
 const delGroup = (path) => cmd(`cgroup-destroy ${path}`);
 const groupPaths = () => ['/', ...[...groups.keys()].sort()];
-function renderGroups() {
-  const tb = $('groups').querySelector('tbody');
-  for (const path of groupPaths()) {
-    const g = groups.get(path) ?? {};
-    let tr = [...tb.rows].find(r => r.dataset.path === path);
-    if (!tr) {
-      tr = tb.insertRow([...tb.rows].filter(r => r.dataset.path < path).length); tr.dataset.path = path;
-      for (let i = 0; i < 5; i++) tr.insertCell();
-      const depth = path === '/' ? 0 : path.split('/').length - 1;
-      tr.cells[0].textContent = path; tr.cells[0].style.paddingLeft = `${0.5 + depth}rem`;
-      if (path !== '/') {
-        const w = document.createElement('input'); w.type = 'number'; w.min = 1; w.max = 10000; w.style.width = '4rem';
-        onSet(w, `cgroup-weight ${path}`);
-        tr.cells[1].append(w);
-        tr.cells[2].append(cpuMask('cpuset.cpus', (want) => `cgroup-cpus ${path} ${want}`));
-      }
-      const child = document.createElement('button'); child.textContent = 'add child'; child.title = `create a cgroup under ${path}`;
-      child.onclick = () => enqueue(() => newGroup(path));
-      tr.cells[4].append(child);
-      if (path !== '/') {
-        const del = document.createElement('button'); del.textContent = 'delete'; del.title = `destroy ${path} (it must have no tasks and no children)`;
-        del.onclick = () => enqueue(() => delGroup(path));
-        tr.cells[4].append(' ', del);
-      }
-    }
-    if (path !== '/') { sync(tr.cells[1].firstElementChild, g.weight); sync(tr.cells[2].firstElementChild, g.cpus); }
-    const members = tasks.filter(t => t.alive && t.stat?.cgroup === path).map(t => t.id).join(', ');
-    if (tr.cells[3].textContent !== members) tr.cells[3].textContent = members;
+// The tree, drawn as nested boxes the way the machine is: a cgroup's box sits inside its parent's,
+// because that is how its weight is applied -- between siblings first, then within. A table could
+// only fake that with indentation, and the one thing people come here to see is exactly the
+// nesting: one task alone in /a against three together in /b is half the CPU against a sixth each.
+// Boxes are made once and kept, like the task rows, so a value being typed is not rebuilt away.
+const boxes = new Map();   // path -> its box element
+// A setting and its name, so the kernel file it writes is the tooltip and not the only label:
+// a bare row of checkboxes says nothing about what it selects.
+function field(label, control, title) {
+  const f = document.createElement('span'); f.className = 'field'; f.title = title;
+  const l = document.createElement('span'); l.className = 'f-label'; l.textContent = label;
+  f.append(l, control);
+  return f;
+}
+
+function cgroupBox(path) {
+  const box = document.createElement('div');
+  box.className = path === '/' ? 'cg root' : 'cg';
+  const head = document.createElement('header');
+  const name = document.createElement('span'); name.className = 'path'; name.textContent = path;
+  head.append(name);
+  // What the cgroup is, then what it is set to: the name and the two buttons that act on the box
+  // itself stay on one line, and each setting gets a line of its own so the labels line up down
+  // the box instead of running together with the name.
+  const settings = document.createElement('div'); settings.className = 'settings';
+  if (path !== '/') {   // the root has neither file: weight only ranks siblings, and its cpuset is fixed
+    const w = document.createElement('input');
+    w.type = 'number'; w.min = 1; w.max = 10000; w.title = 'cpu.weight, against its siblings';
+    onSet(w, `cgroup-weight ${path}`);
+    box.weight = w;
+    box.cpus = cpuMask('cpuset.cpus', (want) => `cgroup-cpus ${path} ${want}`);
+    settings.append(field('weight', w, 'cpu.weight, against its siblings'),
+                    field('cpus', box.cpus, 'cpuset.cpus'));
   }
-  const live = new Set(groupPaths());
-  for (const tr of [...tb.rows]) if (!live.has(tr.dataset.path)) tr.remove();
+  const child = document.createElement('button');
+  child.textContent = '+ cgroup'; child.title = `create a cgroup under ${path}`;
+  child.onclick = () => enqueue(() => newGroup(path));
+  box.addBtn = child;
+  // A disabled button does not take mouse events, and with them goes its tooltip -- which is the
+  // one moment the explanation is wanted. The wrapper is not disabled, so it still answers a hover.
+  box.addWrap = document.createElement('span'); box.addWrap.append(child);
+  head.append(box.addWrap);
+  if (path !== '/') {
+    const del = document.createElement('button'); del.className = 'rm'; del.textContent = '\u2715';
+    del.title = `destroy ${path} (it must have no tasks and no children)`;
+    del.onclick = () => enqueue(() => delGroup(path));
+    box.delBtn = del;
+    box.delWrap = document.createElement('span'); box.delWrap.className = 'rm'; box.delWrap.append(del);
+    head.append(box.delWrap);
+  }
+  box.members = document.createElement('div'); box.members.className = 'members';
+  box.kids = document.createElement('div'); box.kids.className = 'kids';
+  box.append(head, settings, box.members, box.kids);
+  box.head = head;
+  // A cgroup is where its tasks are, so moving a task is dragging its chip into the box. The
+  // innermost box under the pointer takes the drop, not its ancestors, because the boxes nest.
+  box.ondragover = (e) => {
+    if (!e.dataTransfer.types.includes(TASK_DRAG)) return;
+    e.preventDefault(); e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    if (dropBox !== box) { dropBox?.classList.remove('drop'); dropBox = box; box.classList.add('drop'); }
+  };
+  box.ondrop = (e) => {
+    const id = e.dataTransfer.getData(TASK_DRAG);
+    if (!id) return;
+    e.preventDefault(); e.stopPropagation();
+    clearDrop();
+    enqueue(() => cmd(`cgroup-attach ${path} ${id}`));
+  };
+  return box;
+}
+// One box is highlighted at a time; it is cleared on leaving the tree as well as on the drop,
+// since dragging out of the page never fires a drop.
+const TASK_DRAG = 'application/x-kstep-task';
+let dropBox = null;
+const clearDrop = () => { dropBox?.classList.remove('drop'); dropBox = null; };
+$('cgroup-tree').addEventListener('dragleave', (e) => { if (!e.relatedTarget) clearDrop(); });
+$('cgroup-tree').addEventListener('dragend', clearDrop);
+
+function renderGroups() {
+  const paths = groupPaths();
+  const live = new Set(paths);
+  for (const [path, box] of boxes) if (!live.has(path)) { box.remove(); boxes.delete(path); }
+  for (const path of paths) {                       // parents come first, so a child finds its box
+    let box = boxes.get(path);
+    if (!box) { box = cgroupBox(path); boxes.set(path, box); }
+    const parent = path === '/' ? null : path.slice(0, path.lastIndexOf('/')) || '/';
+    const host = parent === null ? $('cgroup-tree') : boxes.get(parent)?.kids ?? $('cgroup-tree');
+    if (box.parentElement !== host) host.append(box);
+    const g = groups.get(path) ?? {};
+    if (path !== '/') { sync(box.weight, g.weight); sync(box.cpus, g.cpus); }
+    // members, in their figure colours, so a task is the same colour here as in Placement
+    const members = tasks.filter((t) => t.alive && t.stat?.cgroup === path).map((t) => t.id);
+    // cgroup v2's no-internal-process rule: a non-root cgroup holds tasks or controlled children,
+    // never both, and the driver rejects the create rather than half-making one. The root is
+    // exempt, so its button never goes dead. Said on the button because the reason is the remedy.
+    if (path !== '/') {
+      box.addBtn.disabled = members.length > 0;
+      box.addWrap.title = box.addBtn.title = members.length
+        ? `move ${members.length === 1 ? 'the task' : 'the tasks'} out of ${path} first: a cgroup cannot hold both tasks and controlled children`
+        : `create a cgroup under ${path}`;
+      // rmdir cannot take a directory with anything in it, so the driver refuses the same thing.
+      box.delBtn.disabled = members.length > 0 || paths.some((p) => p.startsWith(path + '/'));
+      box.delWrap.title = box.delBtn.title = box.delBtn.disabled
+        ? `empty ${path} first: a cgroup with tasks or children cannot be destroyed`
+        : `destroy ${path}`;
+    }
+    if (box.members.dataset.ids !== members.join()) {
+      box.members.dataset.ids = members.join();
+      box.members.replaceChildren(...members.map((id) => {
+        const c = document.createElement('span'); c.className = 'task-chip';
+        c.style.background = colorOf(id); c.textContent = id;
+        c.title = `task ${id} \u2014 drag into another cgroup to move it`;
+        c.draggable = true;
+        c.ondragstart = (e) => { e.dataTransfer.setData(TASK_DRAG, String(id)); e.dataTransfer.effectAllowed = 'move'; };
+        return c;
+      }));
+    }
+  }
 }
 
 // ---- transport: kstep.mjs's cmd(), one command in flight at a time, with a transcript ----
