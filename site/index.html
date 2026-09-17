@@ -18,7 +18,6 @@
   #tasks tfoot:not(:has(#create:not([hidden]))) { display: none; }
   #tasks th:first-child, #tasks td:first-child { text-align: left; }
   #cpu-hint { margin: 0; }
-  #groups th, #groups td { text-align: left; }
   /* scenario tabs: the page's navigation; everything below is the selected scenario */
   #scenarios { display: flex; flex-wrap: wrap; gap: 0; margin: 1.2rem 0 0; border-bottom: 1px solid GrayText; }
   #scenarios button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: none; padding: .35rem .8rem; margin-bottom: -1px; color: GrayText; }
@@ -103,7 +102,6 @@
   #domains-collapsed { color: GrayText; }
   #cpu-stats { white-space: nowrap; }
   #cpu-stats th { text-align: left; }
-  #rd-state { font-size: .85rem; font-weight: normal; }
   #cpu-stats td { font-variant-numeric: tabular-nums; }
   #cpu-editor { margin: 1.2rem 0 .2rem; border-top: 1px solid color-mix(in srgb, GrayText 35%, transparent); padding-top: .6rem; }
   #cpu-editor summary { cursor: pointer; font-weight: 600; }
@@ -179,7 +177,7 @@
 
 <section id="cpus" aria-labelledby="cpus-title">
 <h2 id="cpus-title">Machine <span id="running-cpus" class="hint"></span></h2>
-<h3>CPUs <span id="rd-state" class="hint"></span></h3>
+<h3>CPUs</h3>
 <div class="table-scroll" role="region" aria-label="CPU statistics" tabindex="0">
 <table id="cpu-stats"><thead>
 <tr><th>CPU</th>

@@ -81,8 +81,7 @@ function decodeShm(view, bytes, L) {
       cpu: u32(o), current: u32(o + 4), idle: !!u32(o + 8), capacity: u32(o + 12), freq: u32(o + 16), nr_running: u64(o + 24), nr_switches: u64(o + 32),
       min_vruntime: u64(o + 40), cfs_util_avg: u64(o + 48), cfs_load_avg: u64(o + 56), cfs_runnable_avg: u64(o + 64),
       // what the balancer reads, as against what the runqueue holds
-      h_nr_runnable: u64(o + 72), overloaded: !!(u32(o + 80) & 1), overutilized: !!(u32(o + 80) & 2),
-      next_balance_in: u32(o + 84) }; });
+      h_nr_runnable: u64(o + 72), next_balance_in: u32(o + 80) }; });
     const tasks = Array.from({ length: ntasks }, (_, i) => { const o = L.taskOff + i * L.taskStride; const flags = u32(o + 20); return {
       task: u32(o), state: TASK_STATES[u32(o + 4)], cpu: u32(o + 8), policy: POLICIES[u32(o + 12)] ?? '?', nice: view.getInt32(o + 16, true),
       eligible: !!(flags & 1), delayed: !!(flags & 2), cpus: u64(o + 24), weight: u64(o + 32), sum_exec_runtime: u64(o + 40), vruntime: u64(o + 48),

@@ -586,15 +586,6 @@ function renderCpus() {
   const cores = allCores(machine).length;
   const clusters = machine.sockets.reduce((n, cl) => n + cl.length, 0);
   const sockets = machine.sockets.length;
-  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-  // rd->overloaded and rd->overutilized are the root domain's, the same for every CPU here, so
-  // they are said once above the table rather than repeated down a column.
-  const any = cpuRecords.get(1);
-  $('rd-state').textContent = !any ? '' : [
-    any.overloaded ? 'overloaded' : 'not overloaded',
-    any.overutilized ? 'overutilized' : 'not overutilized'].join(' · ');
-  $('rd-state').title = 'rd->overloaded: some CPU has more than one runnable task, so an idle CPU will go looking.'
-    + ' rd->overutilized: a CPU is near its capacity, which turns energy-aware placement off and periodic balancing on.';
   $('running-cpus').textContent = `· ${plural(ncpus, 'CPU')} · ${plural(cores, 'core')}`
     + (clusters > 1 ? ` · ${plural(clusters, 'cluster')}` : '')
     + (sockets > 1 ? ` · ${plural(sockets, 'socket')}` : '');
@@ -620,7 +611,10 @@ function renderCpus() {
       r?.min_vruntime === undefined ? '—' : ms(r.min_vruntime), r?.nr_switches ?? '—',
       runnable,
       r?.next_balance_in === undefined ? '—' : r.next_balance_in === 0 ? 'due' : r.next_balance_in];
-    values.forEach((v, i) => tr.cells[i + FREQ + 1].textContent = v);
+    values.forEach((v, i) => {   // as renderTask does: an unchanged cell is not touched
+      const cell = tr.cells[i + FREQ + 1], text = String(v);
+      if (cell.textContent !== text) cell.textContent = text;
+    });
   }
 }
 // ---- sched domains: the hierarchy the kernel built, which is not always the one asked for ----
@@ -628,6 +622,7 @@ function renderCpus() {
 // is made of -- span, groups, flags, the balancing knobs -- differing only in the order sd->groups
 // starts at (its own group) and in nr_balance_failed. So the table is one row per distinct
 // (level, span) rather than per CPU, with the groups listed lowest CPU first to be stable.
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const cpulist = (mask) => {   // 0b1110 -> "1-3"
   const out = [];
   for (let c = 0; c < MAX_CPUS + 1; c++) {
@@ -676,7 +671,7 @@ function renderDomains() {
       // min/max only when the group is not uniform: that asymmetry is what misfit looks at
       const range = g.min_capacity === g.max_capacity ? '' : ` (${g.min_capacity}–${g.max_capacity})`;
       el.innerHTML = `<b>${cpulist(g.span)}</b> <i>${g.capacity}${range}</i>`;
-      el.title = `Group of ${g.weight} CPU${g.weight === 1 ? '' : 's'}: total capacity ${g.capacity}, per-CPU ${g.min_capacity}–${g.max_capacity}`;
+      el.title = `Group of ${plural(g.weight, 'CPU')}: total capacity ${g.capacity}, per-CPU ${g.min_capacity}–${g.max_capacity}`;
       gs.append(el);
     }
     const fl = tr.insertCell();
@@ -699,9 +694,7 @@ function renderDomains() {
     bal.textContent = `${ago} ticks ago` + (failed ? `, ${failed} failed` : '');
     // the threshold the kernel escalates at, so a row on the edge of active balancing stands out
     if (failed > d.cache_nice_tries + 2) bal.classList.add('hot');
-    bal.title = `interval ${d.balance_interval} ticks, imbalance_pct ${d.imbalance_pct}, `
-      + `busy_factor ${d.busy_factor}, cache_nice_tries ${d.cache_nice_tries}\n\n`
-      + each(p => `${p.last_balance_ago} ticks ago, ${p.nr_balance_failed} failed`)
+    bal.title = each(p => `${p.last_balance_ago} ticks ago, ${p.nr_balance_failed} failed`)
       + `\n\nactive balancing past ${d.cache_nice_tries + 2} failures`;
   }
   // The levels asked for that the kernel collapsed away: the page knows what it sent.
@@ -908,10 +901,10 @@ function cgroupBox(path) {
   const settings = document.createElement('div'); settings.className = 'settings';
   if (path !== '/') {   // the root has neither file: weight only ranks siblings, and its cpuset is fixed
     const w = document.createElement('input');
-    w.type = 'number'; w.min = 1; w.max = 10000; w.title = 'cpu.weight, against its siblings';
+    w.type = 'number'; w.min = 1; w.max = 10000;
     onSet(w, `cgroup-weight ${path}`);
     box.weight = w;
-    box.cpus = cpuMask('cpuset.cpus', (want) => `cgroup-cpus ${path} ${want}`);
+    box.cpus = cpuMask('', (want) => `cgroup-cpus ${path} ${want}`);
     settings.append(field('weight', w, 'cpu.weight, against its siblings'),
                     field('cpus', box.cpus, 'cpuset.cpus'));
   }
@@ -934,7 +927,6 @@ function cgroupBox(path) {
   box.members = document.createElement('div'); box.members.className = 'members';
   box.kids = document.createElement('div'); box.kids.className = 'kids';
   box.append(head, settings, box.members, box.kids);
-  box.head = head;
   // A cgroup is where its tasks are, so moving a task is dragging its chip into the box. The
   // innermost box under the pointer takes the drop, not its ancestors, because the boxes nest.
   box.ondragover = (e) => {
@@ -962,6 +954,13 @@ $('cgroup-tree').addEventListener('dragend', clearDrop);
 
 function renderGroups() {
   const paths = groupPaths();
+  // one pass over the tasks rather than one per cgroup: every box asks the same question
+  const byGroup = new Map();
+  for (const t of tasks) {
+    if (!t.alive || t.stat?.cgroup === undefined) continue;
+    if (!byGroup.has(t.stat.cgroup)) byGroup.set(t.stat.cgroup, []);
+    byGroup.get(t.stat.cgroup).push(t.id);
+  }
   const live = new Set(paths);
   for (const [path, box] of boxes) if (!live.has(path)) { box.remove(); boxes.delete(path); }
   for (const path of paths) {                       // parents come first, so a child finds its box
@@ -973,14 +972,14 @@ function renderGroups() {
     const g = groups.get(path) ?? {};
     if (path !== '/') { sync(box.weight, g.weight); sync(box.cpus, g.cpus); }
     // members, in their figure colours, so a task is the same colour here as in Placement
-    const members = tasks.filter((t) => t.alive && t.stat?.cgroup === path).map((t) => t.id);
+    const members = byGroup.get(path) ?? [];
     // cgroup v2's no-internal-process rule: a non-root cgroup holds tasks or controlled children,
     // never both, and the driver rejects the create rather than half-making one. The root is
     // exempt, so its button never goes dead. Said on the button because the reason is the remedy.
     if (path !== '/') {
       box.addBtn.disabled = members.length > 0;
       box.addWrap.title = box.addBtn.title = members.length
-        ? `move ${members.length === 1 ? 'the task' : 'the tasks'} out of ${path} first: a cgroup cannot hold both tasks and controlled children`
+        ? `move the ${plural(members.length, 'task')} out of ${path} first: a cgroup cannot hold both tasks and controlled children`
         : `create a cgroup under ${path}`;
       // rmdir cannot take a directory with anything in it, so the driver refuses the same thing.
       box.delBtn.disabled = members.length > 0 || paths.some((p) => p.startsWith(path + '/'));
@@ -988,8 +987,9 @@ function renderGroups() {
         ? `empty ${path} first: a cgroup with tasks or children cannot be destroyed`
         : `destroy ${path}`;
     }
-    if (box.members.dataset.ids !== members.join()) {
-      box.members.dataset.ids = members.join();
+    const ids = members.join();
+    if (box.members.dataset.ids !== ids) {
+      box.members.dataset.ids = ids;
       box.members.replaceChildren(...members.map((id) => {
         const c = document.createElement('span'); c.className = 'task-chip';
         c.style.background = colorOf(id); c.textContent = id;
