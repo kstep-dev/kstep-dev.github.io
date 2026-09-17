@@ -42,32 +42,60 @@ export function qemuArgs({ smp, mem, params = {} }) {
 }
 
 // kmod/shm.h, byte for byte: little-endian, u32/u64 fields, natural alignment.
-const HDR = 32, CPU_STRIDE = 64, TASK_STRIDE = 104, CGROUP_STRIDE = 56;
-const MAX_CPUS = 8, MAX_TASKS = 64, MAX_CGROUPS = 16;
-const TASKS_OFF = HDR + MAX_CPUS * CPU_STRIDE;
-const CGROUPS_OFF = TASKS_OFF + MAX_TASKS * TASK_STRIDE;
-const SHM_SIZE = CGROUPS_OFF + MAX_CGROUPS * CGROUP_STRIDE;
+// The region describes itself (kmod/shm.h): the header carries where each table starts, how wide
+// its records are and how many fit, so nothing here hardcodes a stride or an offset. Only magic,
+// layout and gen sit at fixed places. LAYOUT is bumped by the kmod when a record's fields change
+// meaning without changing its size -- everything that resizes is already caught by the strides.
+const MAGIC = 0x5054536b, LAYOUT = 1;
+const HDR_SIZE = 96;       // the header itself; a change here bumps LAYOUT
+const SHM_MAX = 1 << 20;   // a sanity bound on what the header may claim, before we map it
 const TASK_STATES = ['running', 'runnable', 'sleeping', 'blocked'];
 const POLICIES = { 0: 'normal', 1: 'fifo', 2: 'rr', 3: 'batch', 5: 'idle' };   // the kernel's SCHED_* numbers
 const cstr = (bytes, o, n) => new TextDecoder().decode(bytes.slice(o, o + Math.max(0, bytes.subarray(o, o + n).indexOf(0))));   // slice: TextDecoder refuses shared memory
-function decodeShm(view, bytes) {
+// Read the shape once, and refuse a region this decoder was not built for rather than reading
+// plausible nonsense out of it.
+function shmLayout(view) {
+  const u32 = (o) => view.getUint32(o, true);
+  const magic = u32(0), layout = u32(4);
+  if (magic !== MAGIC) throw new Error(`not a kSTEP shared region (magic ${magic.toString(16)})`);
+  if (layout !== LAYOUT) throw new Error(`shm layout ${layout}, this page speaks ${LAYOUT}: rebuild the image from the current kmod`);
+  const L = {
+    cpuOff: u32(32), cpuStride: u32(36), taskOff: u32(40), taskStride: u32(44),
+    cgroupOff: u32(48), cgroupStride: u32(52), domainOff: u32(56), domainStride: u32(60),
+    maxCpus: u32(64), maxTasks: u32(68), maxCgroups: u32(72), maxDomains: u32(76),
+    maxGroups: u32(80), groupStride: u32(84),
+  };
+  L.size = L.domainOff + L.maxDomains * L.domainStride;
+  if (!(L.size > 0 && L.size <= SHM_MAX)) throw new Error(`shm header claims ${L.size} bytes`);
+  return L;
+}
+function decodeShm(view, bytes, L) {
   for (;;) {
-    const gen = view.getUint32(0, true);
+    const gen = view.getUint32(8, true);
     if (gen & 1) continue;   // the writer is mid-update
-    const ncpus = view.getUint32(8, true), ntasks = view.getUint32(12, true), ngroups = view.getUint32(16, true);
-    if (ncpus > MAX_CPUS || ntasks > MAX_TASKS || ngroups > MAX_CGROUPS) throw new Error('shm layout mismatch');
+    const ncpus = view.getUint32(16, true), ntasks = view.getUint32(20, true), ngroups = view.getUint32(24, true);
+    const ndomains = view.getUint32(28, true);
+    if (ncpus > L.maxCpus || ntasks > L.maxTasks || ngroups > L.maxCgroups || ndomains > L.maxDomains) continue;   // mid-update
     const u32 = (o) => view.getUint32(o, true), u64 = (o) => Number(view.getBigUint64(o, true));
-    const cpus = Array.from({ length: ncpus }, (_, i) => { const o = HDR + i * CPU_STRIDE; return {
-      cpu: u32(o), current: u32(o + 4), idle: !!u32(o + 8), capacity: u32(o + 12), nr_running: u64(o + 16), nr_switches: u64(o + 24),
-      min_vruntime: u64(o + 32), cfs_util_avg: u64(o + 40), cfs_load_avg: u64(o + 48), cfs_runnable_avg: u64(o + 56) }; });
-    const tasks = Array.from({ length: ntasks }, (_, i) => { const o = TASKS_OFF + i * TASK_STRIDE; const flags = u32(o + 20); return {
+    const cpus = Array.from({ length: ncpus }, (_, i) => { const o = L.cpuOff + i * L.cpuStride; return {
+      cpu: u32(o), current: u32(o + 4), idle: !!u32(o + 8), capacity: u32(o + 12), freq: u32(o + 16), nr_running: u64(o + 24), nr_switches: u64(o + 32),
+      min_vruntime: u64(o + 40), cfs_util_avg: u64(o + 48), cfs_load_avg: u64(o + 56), cfs_runnable_avg: u64(o + 64) }; });
+    const tasks = Array.from({ length: ntasks }, (_, i) => { const o = L.taskOff + i * L.taskStride; const flags = u32(o + 20); return {
       task: u32(o), state: TASK_STATES[u32(o + 4)], cpu: u32(o + 8), policy: POLICIES[u32(o + 12)] ?? '?', nice: view.getInt32(o + 16, true),
       eligible: !!(flags & 1), delayed: !!(flags & 2), cpus: u64(o + 24), weight: u64(o + 32), sum_exec_runtime: u64(o + 40), vruntime: u64(o + 48),
       deadline: u64(o + 56), slice: u64(o + 64), cgroup: cstr(bytes, o + 72, 32) }; });
     // the cgroups the kernel holds, the root ("/") first, in tree order
-    const groups = Array.from({ length: ngroups }, (_, i) => { const o = CGROUPS_OFF + i * CGROUP_STRIDE; return {
+    const groups = Array.from({ length: ngroups }, (_, i) => { const o = L.cgroupOff + i * L.cgroupStride; return {
       path: cstr(bytes, o, 40), cpus: u64(o + 40), weight: u32(o + 48) }; });
-    if (view.getUint32(0, true) === gen) return { timestamp: view.getUint32(4, true), cpus, tasks, groups };
+    // the sched domains the kernel built, per CPU and innermost first -- not the topology asked for
+    const domains = Array.from({ length: ndomains }, (_, i) => { const o = L.domainOff + i * L.domainStride; const n = u32(o + 4); return {
+      cpu: u32(o), span: u64(o + 8), name: cstr(bytes, o + 16, 8), flags: cstr(bytes, o + 24, 160),
+      imbalance_pct: u32(o + 184), balance_interval: u32(o + 188),
+      busy_factor: u32(o + 192), cache_nice_tries: u32(o + 196),
+      nr_balance_failed: u32(o + 200), last_balance_ago: u32(o + 204),
+      groups: Array.from({ length: Math.min(n, L.maxGroups) }, (_, j) => { const g = o + 208 + j * L.groupStride; return {
+        span: u64(g), capacity: u32(g + 8), min_capacity: u32(g + 12), max_capacity: u32(g + 16), weight: u32(g + 20) }; }) }; });
+    if (view.getUint32(8, true) === gen) return { timestamp: view.getUint32(12, true), cpus, tasks, groups, domains };
   }
 }
 
@@ -100,7 +128,7 @@ export async function runKstep(Module, { files, smp, mem, params, onConsole, onE
     m.FS.mkdev(path, 0o666, dev);
     return (line) => { for (const b of new TextEncoder().encode(line + '\n')) inq.push(b); };
   };
-  let sendCmd, sendMon, resolveHva, view, bytes;
+  let sendCmd, sendMon, resolveHva, view, bytes, layout;
   const trace = [];   // trace records from the stream, drained by events()
   const hva = new Promise(r => { resolveHva = r; });
   // The module's memory, created here so guest RAM can be read: 1 GB (setup.sh's TOTAL_MEMORY),
@@ -124,12 +152,14 @@ export async function runKstep(Module, { files, smp, mem, params, onConsole, onE
     if (line === null && reply.shm !== undefined) {   // the ready line names the shared region; map it once
       sendMon(`gpa2hva 0x${reply.shm.toString(16)}`);
       const at = await hva;   // a host virtual address is an offset into the wasm heap
-      bytes = new Uint8Array(wasmMemory.buffer, at, SHM_SIZE);
-      view = new DataView(wasmMemory.buffer, at, SHM_SIZE);
+      // the header first, since it says how big the rest is and whether we can read it at all
+      layout = shmLayout(new DataView(wasmMemory.buffer, at, HDR_SIZE));
+      bytes = new Uint8Array(wasmMemory.buffer, at, layout.size);
+      view = new DataView(wasmMemory.buffer, at, layout.size);
     }
     return reply;
   };
-  const shm = () => decodeShm(view, bytes);
+  const shm = () => decodeShm(view, bytes, layout);
   const events = () => trace.splice(0);   // the records seen since the last call
   return { module, cmd, shm, events, done };
 }

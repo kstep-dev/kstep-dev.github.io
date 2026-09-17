@@ -30,17 +30,21 @@ console.error(`[${elapsed()}s] ready`, JSON.stringify(await cmd(null)), `(${imag
 if ('check' in args) {
   const pid = (await cmd('create')).task;
   // one command per verb the page sends; only "unknown command" counts as missing
-  const verbs = ['tick', `nice ${pid} 0`, `policy ${pid} normal`, `affinity ${pid} 1`, `pause ${pid}`, `wake ${pid}`,
+  const verbs = ['tick', `nice ${pid} 0`, `policy ${pid} normal`, `affinity ${pid} 1`, 'cpu-freq 1=512', `pause ${pid}`, `wake ${pid}`,
     'cgroup-create /check', 'cgroup-weight /check 100', 'cgroup-cpus /check 1', `cgroup-attach /check ${pid}`, `kill ${pid}`];
   const missing = [];
   for (const v of verbs) if ((await cmd(v)).error === 'unknown command') missing.push(v.split(' ')[0]);
   const cpu = shm().cpus.find(r => r.cpu === 1);
-  const fields = ['current', 'nr_running', 'capacity', 'nr_switches', 'cfs_util_avg', 'cfs_load_avg', 'cfs_runnable_avg'];
+  const fields = ['current', 'nr_running', 'capacity', 'freq', 'nr_switches', 'cfs_util_avg', 'cfs_load_avg', 'cfs_runnable_avg'];
   const statsOk = cpu && typeof cpu.idle === 'boolean' && fields.every(k => Number.isFinite(cpu[k]) && cpu[k] >= 0);
+  // the sched domains the page shows: at least one level, with groups and the kernel's flag names
+  const dom = shm().domains?.[0];
+  const domOk = dom && dom.name && dom.flags && dom.groups.length >= 2 && dom.imbalance_pct > 0;
   await cmd('exit');
   if (!statsOk) { console.error('playground image lacks valid CPU/runqueue snapshots; rebuild it from the current kmod'); process.exit(1); }
+  if (!domOk) { console.error('playground image reports no sched domains; rebuild it from the current kmod'); process.exit(1); }
   if (missing.length) { console.error(`playground image lacks: ${missing.join(', ')}`); process.exit(1); }
-  console.log(`playground image: all ${verbs.length} verbs answered; CPU/runqueue snapshot verified`);
+  console.log(`playground image: all ${verbs.length} verbs answered; CPU/runqueue and sched-domain snapshots verified`);
 } else if ('bench' in args) {
   const seconds = Number(args.bench || 10);
   for (let i = 0; i < Number(args.tasks ?? 3); i++) await cmd('create');

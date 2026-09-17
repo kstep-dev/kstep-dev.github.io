@@ -14,12 +14,14 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 
 | Path | Purpose |
 |------|---------|
-| `site/` | the published site. Tracked: `index.html` (playground + bug catalog + paper), `style.css`, `kstep.mjs`, `figures/`, `assets/` (paper PDF), `coi-serviceworker.min.js`. Generated, gitignored: `qemu/` (from `setup.sh`), `data.json` and `images/cli/` (from `build.py`) |
+| `site/` | the published site. Tracked: `index.html` (markup and a bootstrap), `playground.mjs` (the whole front end), `style.css`, `kstep.mjs`, `figures/`, `assets/` (paper PDF), `coi-serviceworker.min.js`, `uPlot.iife.min.js` and `uPlot.min.css` (vendored, not a CDN: the page is cross-origin isolated). Generated, gitignored: `qemu/` (from `setup.sh`), `data.json` and `images/cli/` (from `build.py`) |
+| `site/playground.mjs` | the front end: session state, the VM transport, the figures, the tables and the topology editor. `index.html` fetches `data.json` for the version stamp (which busts this module's cache) and calls its `init()` |
+| `pagetest.mjs` | `site/playground.mjs` under Node with a DOM stub: it loads the module, drives the controls and checks a plain load, redraws, the figure toggles and `?charts=` links. A `build.py deploy` gate |
 | `site/kstep.mjs` | shared by the page and `run.mjs`: QEMU arguments, image loading, the `cli` driver's command/reply protocol, completion detection |
 | `setup.sh` | one-time: `setup` (apt, emsdk, meson), `deps` (zlib, libffi, pixman, glib for wasm64), `qemu` (aarch64-softmmu, virt machine only, into `site/qemu/`) |
 | `build.py` | builds the site: writes `site/data.json` (version stamp and the bug catalog, derived from kSTEP's `reproduce.py` Bug table) and rebuilds and copies the playground image (kSTEP's `build/v6.18`: Linux v6.18 for arm64 with the current kmod and user.c, checked out and built on first run) into `site/images/`; `build.py serve [port]` then serves `site/` locally, `build.py deploy` gates on `run.mjs --check` and force-pushes `site/` as the orphan `gh-pages` branch |
 | `run.mjs` | the playground headless under Node (>= 20): the round-robin demo (who ran on which CPU), `--bench <s>` for `tick`/`top` latency, `--check` to verify the staged image answers every verb the page uses (the deploy gate) |
-| `site/index.html` | the front page: the playground, which boots a kernel with the `cli` driver on a configurable machine (sockets × clusters × cores × threads, per-core capacity), creates tasks and ticks the scheduler; a timeline of who ran on which CPU, and a table of each task's counters with nice, affinity, pause/wake and kill controls; live CPU/runqueue statistics below Cgroups and a folded Topology editor above the timeline |
+| `site/index.html` | the front page: the playground, which boots a kernel with the `cli` driver on a configurable machine (sockets × clusters × cores × threads, per-core capacity), creates tasks and ticks the scheduler; a stack of uPlot figures over the same ticks (one toggle per figure, grouped per task and per CPU, the set living in `?charts=`) sharing one window, one zoom and one crosshair, with Placement -- a row per CPU, shared out among the tasks on it -- shown by default, and a table of each task's counters with nice, affinity, pause/wake and kill controls; live CPU/runqueue statistics below Cgroups and a folded Topology editor above the charts |
 
 `KSTEP_DIR` is the kSTEP checkout; it defaults to `..` (this repo as kSTEP's
 `website` submodule) or `../kstep`. Everything else generated lives in `build/`.
@@ -30,7 +32,8 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 ./setup.sh                            # first time ~15 min; ./setup.sh qemu rebuilds QEMU only
 ./run.mjs [--build v6.18]             # the playground headless: round-robin demo; --bench for latency, --check for the deploy gate
 ./build.py serve 8080                 # http://localhost:8080/ ; builds the playground image (kSTEP's build/v6.18) first
-./build.py deploy                     # https://kstep-dev.github.io/
+./pagetest.mjs                        # the front end under Node: no browser, no VM
+./build.py deploy                     # https://kstep-dev.github.io/ (gated on both checks)
 ```
 
 ## Notes
@@ -70,7 +73,13 @@ runnable averages, root CFS minimum vruntime, and cumulative context switches.
 Older images show unavailable counters rather than inferred runqueue values;
 `run.mjs --check` requires these records before deployment.
 
-The Topology editor starts folded above the timeline. It is a draft: presets, dimensions, and per-core capacities do
+The Charts section is the run: one column per tick, the window set by the scrollbar (pan) and the
+column width (ctrl or cmd wheel to zoom), and every figure handed that same window so a column
+cannot drift between two of them. Placement is the default and replaces what used to be a separate
+timeline canvas: a row per CPU, shared out at each tick among the tasks on that CPU, solid for the
+one that ran and faint for those queued behind it -- which the old canvas could not show.
+
+The Topology editor starts folded above the charts. It is a draft: presets, dimensions, and per-core capacities do
 not affect the running session until Restart. Discard restores the running
 configuration. Layouts have at most eight experiment CPUs, plus CPU 0 for the
 driver. Restart stores the configuration in the URL and resets the experiment.

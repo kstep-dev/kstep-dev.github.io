@@ -3,7 +3,7 @@
 
     ./build.py                 # site/ = tracked files + qemu/ (from setup.sh) + data.json and images/cli (from here)
     ./build.py serve [PORT]    # build, then http://localhost:8080/
-    ./build.py deploy          # build, gate on `run.mjs --check`, force-push site/ as the orphan gh-pages branch
+    ./build.py deploy          # build, gate on `pagetest.mjs` and `run.mjs --check`, force-push site/ as gh-pages
 
 Run it after changing the page, kSTEP's kmod, or the bug table. The kSTEP checkout is .. (this
 repo as kSTEP's website submodule) or a sibling ../kstep, or $KSTEP_DIR.
@@ -82,6 +82,8 @@ def serve(port: int):
 
 def deploy(version: str):
     # Refuse to publish a page whose playground image does not speak its protocol.
+    if subprocess.run([NODE, W / "pagetest.mjs"]).returncode:
+        raise SystemExit("deploy aborted: site/playground.mjs failed its checks")
     if subprocess.run([NODE, "--wasm-lazy-compilation", W / "run.mjs", "--check"]).returncode:
         raise SystemExit("deploy aborted: rebuild the playground image from the current kmod and user.c")
     origin = subprocess.check_output(["git", "-C", W, "remote", "get-url", "origin"], text=True).strip()
