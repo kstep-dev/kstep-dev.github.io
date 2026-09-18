@@ -131,8 +131,8 @@ check('plain wheel pans without throwing', true);
 await load('?charts=placement,cputime');
 check('a saved view opens', shown().join(',') === 'Placement,CPU time', shown().join(','));
 await load('?charts=nosuchfigure');
-check('an unknown figure is dropped, leaving the default set', shown().join(',') === 'Placement,CPU time', shown().join(','));
-await load('?scenario=nice');
+check('an unknown figure is dropped, leaving the default set', shown().join(',') === 'Placement', shown().join(','));
+await load('?scenario=fair');
 check('a scenario brings its figures', shown().length > 1, shown().join(', '));
 
 console.log(failures ? `\n${failures} failed` : '\nall checks passed');

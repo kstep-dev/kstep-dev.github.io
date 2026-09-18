@@ -836,9 +836,15 @@ function renderTask(t) {
     const nice = document.createElement('input'); nice.type = 'number'; nice.min = -20; nice.max = 19; nice.value = 0; nice.style.width = '2.9rem';
     onSet(nice, `nice ${t.id}`);
     tr.cells[NICE].append(nice);
-    // scheduling class; real-time ones run at one fixed priority in the driver
-    const pol = document.createElement('select'); pol.title = 'scheduling class';
-    pol.replaceChildren(...['normal', 'batch', 'idle', 'fifo', 'rr'].map(v => new Option(v, v)));
+    // scheduling class; the policies are grouped by the class that implements them, since that is
+    // what decides the task's fate -- any real-time task outranks every fair one. The option values
+    // stay the driver's own words. Real-time tasks run at one fixed priority in the driver.
+    const pol = document.createElement('select'); pol.title = 'scheduling policy, grouped by scheduling class';
+    pol.replaceChildren(...[['fair', ['normal', 'batch', 'idle']], ['real-time', ['fifo', 'rr']]].map(([label, vs]) => {
+      const g = document.createElement('optgroup'); g.label = label;
+      g.replaceChildren(...vs.map(v => new Option(v, v)));
+      return g;
+    }));
     onSet(pol, `policy ${t.id}`);
     tr.cells[POL].append(pol);
     const aff = cpuMask(AFF_TITLE, (want) => `affinity ${t.id} ${want}`);
@@ -1065,18 +1071,15 @@ $('create').onclick = () => enqueue(create);
 // they stay readable here; everything else is a driver line verbatim.
 const m_ = (...sockets) => cpuSetup(mach(...sockets));
 const SCENARIOS = {
-  free: { title: 'Default', charts: ['placement', 'cputime'],
+  free: { title: 'Default', charts: ['placement'],
     script: [...m_([[core(2), core(2)]]), 'create 5'],
     text: 'Five equal tasks on two cores with two threads each. Change nice values and affinities, pause and wake tasks, and watch the scheduler react.' },
-  rr: { title: 'Round robin', charts: ['placement', 'cputime'],
+  fair: { title: 'Fair sharing', charts: ['placement', 'cputime', 'vruntime'],
     script: [...m_([[core(1)]]), 'create 3'],
-    text: 'Three equal tasks on one CPU. EEVDF runs them in turn, one slice each, and the pattern repeats; runtime and vruntime grow at the same rate for all three.' },
-  nice: { title: 'Weighted round robin', charts: ['placement', 'cputime', 'vruntime'],
-    script: [...m_([[core(1)]]), 'create 3', 'nice 1 -5', 'nice 3 5'],
-    text: 'One CPU, three tasks at nice -5, 0 and 5 (weights 3121, 1024, 335). CPU time is shared by weight: task 1 (nice -5) gets about three slices for each one of task 2\u2019s, task 3 (nice 5) about a third. CPU time fans out three ways; Virtual runtime does not, because it is runtime divided by weight.' },
-  two: { title: 'Two CPUs', charts: ['placement', 'queues'],
-    script: [...m_([[core(1), core(1)]]), 'create 6'],
-    text: 'Six equal tasks on two equal CPUs. Wakeup placement at creation leaves five on cpu1 and one on cpu2. The periodic balancer then moves one task at a time, roughly every 140 ticks, until the split is 3 : 3. Balancing is slow and stepwise, not instant; compare Big and little cores, where it stops earlier on purpose.' },
+    text: 'Three equal tasks on one CPU. EEVDF runs them in turn, one slice each, and the pattern repeats: CPU time and virtual runtime climb at the same rate for all three. Give them different nice values in the Tasks table to make it weighted \u2014 at nice -5, 0 and 5 the weights are 3121, 1024 and 335, so task 1 gets about three slices for each one of task 2\u2019s and task 3 about a third. CPU time then fans out three ways; Virtual runtime does not, because it is runtime divided by weight.' },
+  realtime: { title: 'Real-time tasks', charts: ['placement', 'cputime'],
+    script: [...m_([[core(1)]]), 'create 3', 'policy * rr'],
+    text: 'Three equal tasks on one CPU, all SCHED_RR. Real-time tasks of the same priority take the CPU strictly in turn, one 100 ms timeslice each, so Placement is three long blocks instead of EEVDF\u2019s fine grain and CPU time climbs in long straight runs. Every second all three lines pause together: RT bandwidth control (sched_rt_runtime_us) gives the real-time class only 0.95 s of each second. Nice does nothing here \u2014 it is a fair-class idea; put one task back to normal and it gets only that leftover 0.05 s.' },
   balance: { title: 'Load balancing', charts: ['placement', 'queues'],
     script: [...m_([[core(1), core(1)]]), 'create 4', 'affinity * 1', 'tick 10', 'affinity * 1-2'],
     text: 'Four tasks start pinned to cpu1 while cpu2 idles; after ten ticks they may run on either CPU. In Placement all four lanes sit in cpu1’s row, sharing it; cpu2’s balancer looks for work only at its balance interval, and after a while pulls two of them across in one go. Runnable tasks shows the same moment as 4 : 0 becoming 2 : 2. Nothing moves immediately: balancing is periodic, not instant.' },
@@ -1086,7 +1089,7 @@ const SCENARIOS = {
     text: 'One CPU, four equal tasks: task 1 alone in cgroup /a, the other three together in /b. Fairness is applied between cgroups first, then within: task 1 gets half the CPU, the three others a sixth each. Set /b\u2019s weight to 300 in the Cgroups table and all four become equal.' },
   little: { title: 'Big and little cores', charts: ['placement', 'util', 'queues'],
     script: [...m_([[core(1, 1024)], [core(1, 512)]]), 'create 6'],
-    text: 'The same six tasks, but cpu2 has half the capacity of cpu1. Placement again starts at 5 : 1. The balancer moves one task to the little core after a couple of hundred ticks and then stops at 4 : 2, matching the 2 : 1 capacity ratio; on equal CPUs (Two CPUs) it would continue to 3 : 3. Load is balanced per unit of capacity, not per task.' },
+    text: 'Six equal tasks on two CPUs, where cpu2 has half the capacity of cpu1. Wakeup placement at creation starts them 5 : 1. The balancer moves one task to the little core after a couple of hundred ticks and then stops at 4 : 2, matching the 2 : 1 capacity ratio; on two equal CPUs it would keep going to 3 : 3. Load is balanced per unit of capacity, not per task.' },
 };
 const params = new URLSearchParams(location.search);
 const scenario = SCENARIOS[params.get('scenario')] ?? (params.has('script') ? null : SCENARIOS.free);
