@@ -14,26 +14,26 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 
 | Path | Purpose |
 |------|---------|
-| `site/` | the published site. Tracked: `index.html` (markup and a bootstrap), `playground.mjs` (the whole front end), `style.css`, `kstep.mjs`, `figures/`, `assets/` (paper PDF), `coi-serviceworker.min.js`, `uPlot.iife.min.js` and `uPlot.min.css` (vendored, not a CDN: the page is cross-origin isolated). Generated, gitignored: `qemu/` (from `setup.sh`), `data.json` and `images/cli/` (from `build.py`) |
+| `site/` | the published site. Tracked: `index.html` (markup and a bootstrap), `playground.mjs` (the whole front end), `style.css`, `kstep.mjs`, `figures/`, `assets/` (paper PDF), `coi-serviceworker.min.js`, `uPlot.iife.min.js` and `uPlot.min.css` (vendored, not a CDN: the page is cross-origin isolated). Generated, gitignored: `qemu/` (from `setup.sh`), `data.json`, `images/cli/` and `kstep_core.js` + `kstep_core_bg.wasm` (from `kstep viz`) |
 | `site/playground.mjs` | the front end: session state, the VM transport, the figures, the tables and the topology editor. `index.html` fetches `data.json` for the version stamp (which busts this module's cache) and calls its `init()` |
-| `pagetest.mjs` | `site/playground.mjs` under Node with a DOM stub: it loads the module, drives the controls and checks a plain load, redraws, the figure toggles and `?charts=` links. A `build.py deploy` gate |
-| `site/kstep.mjs` | shared by the page and `run.mjs`: QEMU arguments, image loading, the `cli` driver's command/reply protocol, completion detection |
+| `pagetest.mjs` | `site/playground.mjs` under Node with a DOM stub: it loads the module, drives the controls and checks a plain load, redraws, the figure toggles and `?charts=` links. A `kstep viz deploy` gate |
+| `site/kstep.mjs` | shared by the page and `run.mjs`: the Emscripten device nodes, the `cli` driver's command/reply protocol, completion detection, and the calls into kSTEP's core (`kstep_core.js`: QEMU's arguments and the decoder for the machine's state, `crates/core` built for wasm32) |
 | `setup.sh` | one-time: `setup` (apt, emsdk, meson), `deps` (zlib, libffi, pixman, glib for wasm64), `qemu` (aarch64-softmmu, virt machine only, into `site/qemu/`) |
-| `build.py` | builds the site: writes `site/data.json` (version stamp and the bug catalog, derived from kSTEP's `reproduce.py` Bug table) and rebuilds and copies the playground image (kSTEP's `build/v6.18`: Linux v6.18 for arm64 with the current kmod and user.c, checked out and built on first run) into `site/images/`; `build.py serve [port]` then serves `site/` locally, `build.py deploy` gates on `run.mjs --check` and force-pushes `site/` as the orphan `gh-pages` branch |
+| `kstep viz` (in the parent repo: `../kstep.sh viz`) | builds the site: compiles `crates/core` for wasm32 into `site/kstep_core.js` + `kstep_core_bg.wasm`, writes `site/data.json` (version stamp and the bug catalog from `bugs.yaml`) and rebuilds and copies the playground image (kSTEP's `build/v6.18`: Linux v6.18 for arm64 with the current kmod and user.c, checked out and built on first run) into `site/images/`; `kstep viz serve [port]` then serves `site/` locally, `kstep viz deploy` gates on `pagetest.mjs` and `run.mjs --check` and force-pushes `site/` as the orphan `gh-pages` branch. Needs `rustup target add wasm32-unknown-unknown` and `cargo install wasm-bindgen-cli` at the version in `Cargo.lock` |
 | `run.mjs` | the playground headless under Node (>= 20): the round-robin demo (who ran on which CPU), `--bench <s>` for `tick`/`top` latency, `--check` to verify the staged image answers every verb the page uses (the deploy gate) |
 | `site/index.html` | the front page: the playground, which boots a kernel with the `cli` driver on a configurable machine (sockets × clusters × cores × threads, per-core capacity), creates tasks and ticks the scheduler; a stack of uPlot figures over the same ticks (one toggle per figure, grouped per task and per CPU, the set living in `?charts=`) sharing one window, one zoom and one crosshair, with Placement -- a row per CPU, shared out among the tasks on it -- shown by default, and a table of each task's counters with nice, affinity, pause/wake and kill controls; then the Workload (tasks and cgroups), the Scheduler (each CPU's queues, one block per class) and the Machine (CPU statistics and sched domains), with a folded Topology editor above the charts |
 
-`KSTEP_DIR` is the kSTEP checkout; it defaults to `..` (this repo as kSTEP's
-`website` submodule) or `../kstep`. Everything else generated lives in `build/`.
+`KSTEP_DIR` is the kSTEP checkout for `run.mjs`; it defaults to `..` (this repo as kSTEP's
+`website` submodule). Everything else generated lives in `build/`.
 
 ## Usage
 
 ```sh
 ./setup.sh                            # first time ~15 min; ./setup.sh qemu rebuilds QEMU only
 ./run.mjs [--build v6.18]             # the playground headless: round-robin demo; --bench for latency, --check for the deploy gate
-./build.py serve 8080                 # http://localhost:8080/ ; builds the playground image (kSTEP's build/v6.18) first
+../kstep.sh viz serve 8080            # http://localhost:8080/ ; builds the decoder and the playground image (kSTEP's build/v6.18) first
 ./pagetest.mjs                        # the front end under Node: no browser, no VM
-./build.py deploy                     # https://kstep-dev.github.io/ (gated on both checks)
+../kstep.sh viz deploy                # https://kstep-dev.github.io/ (gated on both checks)
 ```
 
 ## Notes

@@ -4,3 +4,5 @@ results/
 site/qemu/
 site/data.json
 site/images/
+site/kstep_core.js
+site/kstep_core_bg.wasm
