@@ -970,8 +970,10 @@ function groupRow(path) {
     tr.cpus = cpuMask('cpuset.cpus: the CPUs its tasks may use', (want) => `cgroup-cpus ${path} ${want}`);
     tr.cells[AFF].append(tr.cpus);
   }
+  // a task is born where it belongs: the button sits on the cgroup's row, the root's included
+  [tr.taskBtn, tr.taskWrap] = wrapped('+ task', `create a task in ${path}`, () => enqueue(() => create(path)));
   [tr.addBtn, tr.addWrap] = wrapped('+ cgroup', `create a cgroup under ${path}`, () => enqueue(() => newGroup(path)));
-  actCell.append(tr.addWrap);
+  actCell.append(tr.taskWrap, ' ', tr.addWrap);
   if (path !== '/') {
     [tr.delBtn, tr.delWrap] = wrapped('\u2715', `destroy ${path} (it must have no tasks and no children)`, () => enqueue(() => delGroup(path)));
     tr.delBtn.className = 'rm';
@@ -1003,6 +1005,10 @@ function renderGroups() {
       tr.addWrap.title = tr.addBtn.title = members.length
         ? `move the ${plural(members.length, 'task')} out of ${path} first: a cgroup cannot hold both tasks and controlled children`
         : `create a cgroup under ${path}`;
+      tr.taskBtn.disabled = kids.length > 0;
+      tr.taskWrap.title = tr.taskBtn.title = kids.length
+        ? `${path} has child cgroups, so it cannot hold tasks`
+        : `create a task in ${path}`;
       // rmdir cannot take a directory with anything in it, so the driver refuses the same thing.
       tr.delBtn.disabled = members.length > 0 || kids.length > 0;
       tr.delWrap.title = tr.delBtn.title = tr.delBtn.disabled
@@ -1177,8 +1183,10 @@ async function step() {
   snapshots.push({ tasks: new Map(taskRecords), cpus: new Map(cpuRecords) });
   draw();
 }
-async function create() {
-  const r = await cmd('create');
+// A task is created in a cgroup (the driver moves it before its first wakeup, so the scheduler
+// first sees it there); the root needs no path.
+async function create(path = '/') {
+  const r = await cmd(path === '/' ? 'create' : `create ${path}`);
   if (!r.error) tasks.push({ id: r.task, alive: true });
 }
 // UI actions run one after another on a queue; buttons stay enabled, nothing is dropped.
@@ -1200,7 +1208,6 @@ $('play').onclick = () => { running = !running; schedule(); };
 $('speed').onchange = schedule;                                 // re-paces without leaving the state
 $('step').onclick = () => { pause(); enqueue(step); };          // enabled while running: break in, then tick
 schedule();                                                     // the button's face comes from the state, not the markup
-$('create').onclick = () => enqueue(create);
 
 // ---- boot ----
 // The configuration lives in the URL, so it can be shared, and the VM boots as soon as the page
@@ -1277,6 +1284,9 @@ if (location.hash === '#cpu-editor') $('cpu-editor').open = true;
 const urlCharts = (params.get('charts') ?? '').split(',').filter((id) => FIGURES[id]);
 setCharts(urlCharts.length ? urlCharts : scenario?.charts ?? ['placement']);
 renderCpus();
+// Restart is a reload: the URL is the whole initial condition (scenario or script, and the chart
+// set), and QEMU never exits under Emscripten, so a fresh VM is a fresh page.
+$('restart').onclick = () => location.reload();
 $('boot').onclick = () => {
   if (!refreshLayout()) return;
   // capacity is live, so the reboot carries what the kernel has now -- not a stale form value
@@ -1307,19 +1317,19 @@ async function boot() {
     await cmd(null);   // the driver's ready line
     setStatus('Running setup…', false, true);
     // The script, as driver lines, except the page's two conveniences: `tick N` advances the
-    // charts so the run is drawn, and `*` stands for every task created so far. `create N` goes
-    // through create() because the page numbers the tasks it made.
+    // charts so the run is drawn, and `*` stands for every task created so far. `create [N] [/path]`
+    // goes through create() because the page numbers the tasks it made.
     for (const line of script) {
       const [verb, who, ...rest] = line.split(' ');
       if (verb === 'tick') { for (let i = 0; i < (+who || 1); i++) await step(); continue; }
-      if (verb === 'create') { for (let i = 0; i < (+who || 1); i++) await create(); continue; }
+      if (verb === 'create') { const path = [who, ...rest].find((a) => a?.startsWith('/')); for (let i = 0; i < (+who || 1); i++) await create(path); continue; }
       if (who !== '*') { const r = await cmd(line); if (r.error && MACHINE_VERBS.includes(verb)) throw new Error(`${line}: ${r.error}`); continue; }
       for (const t of tasks) await cmd(`${verb} ${t.id} ${rest.join(' ')}`.trim());
     }
     renderGroups();   // the cgroup tree (root row) once the VM is up
     draw();
     setStatus('Kernel ready');
-    $('clock').hidden = false; $('create').hidden = false;
+    $('clock').hidden = false;
     schedule();          // start the clock at the speed in the box
   } catch (e) { setStatus('error: ' + e.message, true); }
 }
