@@ -70,41 +70,22 @@
   .chart { border: 1px solid GrayText; margin-bottom: .5rem; }
   .chart-head { display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap; padding: .3rem .4rem 0; font-size: .85rem; color: GrayText; }
   .chart-head b { color: CanvasText; font-weight: 600; }
-  /* the cgroup tree, drawn the way the machine is: every box is the cgroup it draws, and a box
-     sits inside its parent, because that is how weight is applied -- between siblings, then within */
-  /* the tree is laid out like the machine editor: a box is as wide as what is in it, and
-     siblings sit side by side, so the nesting is read from containment rather than indentation */
-  #cgroup-tree { margin: .3rem 0 .6rem; display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-start; }
-  .cg { border: 1px solid GrayText; border-radius: .35rem; padding: .35rem .45rem; width: fit-content; }
-  .cg.root { border-style: dashed; }
-  .cg > header { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; font-size: .8rem; color: GrayText; }
-  .cg > header .path { font-weight: 600; color: CanvasText; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .cg > header input[type=number] { width: 3.4rem; }
-  .cg > header button { padding: 0 .35rem; font-size: .7rem; line-height: 1.5; }
-  .cg > header > .rm { margin-left: auto; }
-  .cg > header > span { display: inline-flex; }
-  /* every setting says what it is, so a row of checkboxes is not left to be guessed at,
-     and one per line keeps the labels aligned down the box */
-  .cg > .settings { display: flex; flex-direction: column; align-items: flex-start; gap: .15rem;
-    font-size: .8rem; color: GrayText; }
-  .cg > .settings:not(:empty) { margin-top: .25rem; }
-  .cg .field { display: inline-flex; align-items: center; gap: .25rem; }
-  .cg .field > .f-label { min-width: 3.1rem; }
-  .cg .field > .f-label::after { content: ':'; }
-  .cg .members { display: flex; flex-wrap: wrap; gap: .25rem; margin-top: .3rem; min-height: 1.1rem; }
-  .cg .members:empty::before { content: 'no tasks'; color: GrayText; font-size: .75rem; }
-  .cg.drop .members:empty::before { content: 'drop here'; color: AccentColor; }
-  .cg .kids { display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-start; }
-  .cg .kids:not(:empty) { margin-top: .3rem; }
-  /* the box you would drop into, named while the drag is on rather than after it lands */
-  .cg.drop { border-color: AccentColor; background: color-mix(in srgb, AccentColor 12%, Canvas); }
-  .cg.drop > .kids > .cg { background: Canvas; }
+  /* the workload is one table: a cgroup's row, then its tasks and child cgroups one step in */
+  #tasks tr.group td { background: color-mix(in srgb, GrayText 10%, Canvas); color: GrayText; font-size: .85rem; }
+  #tasks tr.group .path { font-weight: 600; color: CanvasText; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #tasks tr.group input[type=number] { width: 3.4rem; }
+  #tasks tr.group .f-label { font-size: .75rem; }
+  #tasks tr.group button { padding: 0 .35rem; font-size: .7rem; line-height: 1.5; }
+  #tasks tr.group td:last-child > span { display: inline-flex; }
+  #tasks td:first-child { padding-left: calc(.2rem + var(--depth, 0) * 1.2rem); }
+  /* the cgroup you would drop into, named while the drag is on rather than after it lands */
+  #tasks tr.drop td { background: color-mix(in srgb, AccentColor 12%, Canvas); }
   .task-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 1.4rem;
     padding: 0 .3rem; border-radius: .25rem; font-size: .75rem; color: #fff; font-variant-numeric: tabular-nums;
     user-select: none; }
-  /* only the tree's chips drag (into another cgroup); the same chip elsewhere is a label */
-  .cg .members .task-chip { cursor: grab; }
-  .cg .members .task-chip:active { cursor: grabbing; }
+  /* only the workload's chips drag (into another cgroup); the same chip elsewhere is a label */
+  #tasks .task-chip { cursor: grab; }
+  #tasks .task-chip:active { cursor: grabbing; }
   .chart-head .note { flex: 1 1 12rem; min-width: 0; }
   /* uPlot follows the page's system colours instead of its own light-mode defaults */
   .uplot .u-axis, .u-legend { color: CanvasText; }
@@ -199,10 +180,9 @@
 
 <h2>Workload</h2>
 <div class="table-scroll" role="region" aria-label="Tasks" tabindex="0">
-<table id="tasks"><thead><tr><thead><tr><thead><tr><th>task</th><th>state</th><th>cpu</th><th>affinity</th><th title="sum_exec_runtime: CPU time this task has actually been given, in milliseconds of real time">cpu time</th><th>policy</th><th title="The parameter the task's own class reads: nice for the fair classes (normal, batch), a real-time priority for fifo and rr. SCHED_IDLE ignores nice as well, so it is shown greyed out there.">nice / priority</th><th title="The fair classes' share, from nice: 1024 is nice 0, and SCHED_IDLE pins it at 3. Blank for fifo and rr, which never read it. Compared against the siblings on the task's queue, under Scheduler.">weight</th><th></th></tr></thead><tbody></tbody><tfoot><tr><td colspan="9"><button id="create" hidden>create task</button></td></tr></tfoot></table>
+<table id="tasks"><thead><tr><th>task</th><th>state</th><th>cpu</th><th title="A task's allowed CPUs; a cgroup's cpuset.cpus">affinity</th><th title="sum_exec_runtime: CPU time this task has actually been given, in milliseconds of real time">cpu time</th><th>policy</th><th title="The parameter the task's own class reads: nice for the fair classes (normal, batch), a real-time priority for fifo and rr. SCHED_IDLE ignores nice as well, so it is shown greyed out there.">nice / priority</th><th title="The fair classes' share, from nice: 1024 is nice 0, and SCHED_IDLE pins it at 3. Blank for fifo and rr, which never read it. A cgroup's row shows its cpu.weight, whose 100 is a task's 1024, against its sibling cgroups and the tasks beside it. Compared against the siblings on the queue, under Scheduler.">weight</th><th></th></tr></thead><tbody></tbody><tfoot><tr><td colspan="9"><button id="create" hidden>create task</button></td></tr></tfoot></table>
 </div>
 
-<div id="cgroup-tree"></div>
 
 <h2>Scheduler</h2>
 <p class="hint">One scheduler, several classes: what each CPU has to pick between after the last command, one block per class with something queued. The real-time class comes first because any task on it outranks every fair one: it runs the head of its highest priority list, and its share of each second is capped. The fair queue picks the eligible entity with the earliest deadline, whether it is a task or another cgroup, whose own queue is indented under its entity, since that is where it hangs.</p>
@@ -292,7 +272,7 @@ kSTEP's effectiveness by reproducing seven real-world scheduler bugs and uncover
 
 <script src="coi-serviceworker.min.js"></script>
 <script type="module">
-// data.json carries the version stamp that busts playground.mjs's cache, so it is fetched first
+// data.json carries the version stamp that busts viz.mjs's cache, so it is fetched first
 // and handed straight to init(). Everything else lives in that module.
 let data = { version: '', bugs: [] };
 try {
@@ -304,7 +284,7 @@ try {
   el.textContent = 'data.json failed: ' + e.message; el.className = 'bad';
   document.getElementById('kernel-logs').open = true;
 }
-const { init } = await import(`./playground.mjs?v=${data.version}`);
+const { init } = await import(`./viz.mjs?v=${data.version}`);
 init(data);
 </script>
 </body>

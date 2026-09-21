@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// site/playground.mjs under Node, with just enough DOM to run it.
+// site/viz.mjs under Node, with just enough DOM to run it.
 //
 //   ./pagetest.mjs            # the checks below; non-zero exit on the first failure
 //
@@ -10,7 +10,7 @@
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-const MODULE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'site', 'playground.mjs');
+const MODULE = path.join(path.dirname(fileURLToPath(import.meta.url)), 'site', 'viz.mjs');
 
 // ---- the DOM, about as much as the module touches ----
 const autoList = () => new Proxy([], { get: (t, k) =>

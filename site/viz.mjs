@@ -782,7 +782,7 @@ const scriptWith = (script, m) => [...cpuSetup(m), ...script.filter(l => !MACHIN
 
 // ---- task table: rows are created once and updated in place (no rebuild, no flicker) ----
 const rowOf = new Map();
-const STATE = 1, CPU = 2, AFF = 3, TIME = 4, POL = 5, NICE = 6, WEIGHT = 7, ACT = 8;   // where the task is and what it got, then its class, parameter and the weight that follows
+const STATE = 1, CPU = 2, AFF = 3, TIME = 4, POL = 5, NICE = 6, WEIGHT = 7, ACT = 8, NCOLS = 9;   // where the task is and what it got, then its class, parameter and the weight that follows
 const AFF_TITLE = 'CPUs the task may run on';
 // A row's controls are inputs and views at once: the user types into them, but the same
 // settings get changed behind their back -- a scenario's setup script sends driver lines
@@ -860,13 +860,18 @@ function renderTask(t) {
   if (!t.alive) { if (tr) { tr.remove(); rowOf.delete(t.id); } return; }
   if (!tr) {
     tr = tb.insertRow(); rowOf.set(t.id, tr);
-    for (let i = 0; i < 9; i++) tr.insertCell();   // one per <th>; vruntime and deadline are queue-local, so they live under Scheduler
+    for (let i = 0; i < NCOLS; i++) tr.insertCell();   // one per <th>; vruntime and deadline are queue-local, so they live under Scheduler
     tr.cells[ACT].style.whiteSpace = 'nowrap';
-    // the task's number in its figure colour, the same chip as in the cgroup tree, so a task is
-    // one mark wherever it appears; the cgroup itself is read off the tree, where the chip sits
+    // the task's number in its figure colour, the same chip as under Scheduler, so a task is one
+    // mark wherever it appears. The row sits under its cgroup's row; dragging the chip onto
+    // another cgroup's row (or one of its tasks) moves the task there.
     const chip = document.createElement('span'); chip.className = 'task-chip';
     chip.style.background = colorOf(t.id); chip.textContent = t.id;
+    chip.title = `task ${t.id} \u2014 drag onto a cgroup to move it there`;
+    chip.draggable = true;
+    chip.ondragstart = (e) => { e.dataTransfer.setData(TASK_DRAG, String(t.id)); e.dataTransfer.effectAllowed = 'move'; };
     tr.cells[0].append(chip);
+    dropTarget(tr, () => t.stat?.cgroup ?? '/');
     // The scheduling parameter, which is not one control but whichever one the task's policy
     // reads: nice for the fair classes, a real-time priority for fifo and rr. One cell holds both
     // and shows the one that is in force, so a task's row never offers a knob its class ignores.
@@ -918,10 +923,12 @@ function renderTask(t) {
 }
 
 // ---- cgroups: the tree the kernel reports after every command (path -> {weight, cpus}, from
-// kmod/shm.h), root "/" first. The tree is configuration and membership only -- what the reader
-// set, drawn as nesting; the weight and cpuset controls are views of the kernel's values, like
-// the task table's, so a change made behind the UI's back shows up. What the scheduler makes of
-// it is per CPU and changes every tick, so it is drawn under Queues (renderQueues). ----
+// kmod/shm.h), root "/" first. The workload is one table: a cgroup is a row, and its tasks and its
+// child cgroups are the rows beneath it, one step further in -- nesting as an outline, with every
+// column aligned down the page. The weight and cpuset controls are views of the kernel's values,
+// like the task rows', so a change made behind the UI's back shows up. A cgroup's row shows only
+// what the kernel holds for the cgroup itself; what the scheduler makes of it is per CPU -- one
+// group entity on each CPU's queue -- and is drawn there, under Scheduler. ----
 let groups = new Map();
 let ngroups = 0;
 async function newGroup(parent) {
@@ -930,132 +937,115 @@ async function newGroup(parent) {
 // The kernel refuses a cgroup that still has tasks or children, and says so in the transcript.
 const delGroup = (path) => cmd(`cgroup-destroy ${path}`);
 const groupPaths = () => ['/', ...[...groups.keys()].sort()];
-// The tree, drawn as nested boxes the way the machine is: a cgroup's box sits inside its parent's,
-// because that is how its weight is applied -- between siblings first, then within. A table could
-// only fake that with indentation, and the one thing people come here to see is exactly the
-// nesting: one task alone in /a against three together in /b is half the CPU against a sixth each.
-// Boxes are made once and kept, like the task rows, so a value being typed is not rebuilt away.
-const boxes = new Map();   // path -> its box element
-// A setting and its name, so the kernel file it writes is the tooltip and not the only label:
-// a bare row of checkboxes says nothing about what it selects.
-function field(label, control, title) {
-  const f = document.createElement('span'); f.className = 'field'; f.title = title;
-  const l = document.createElement('span'); l.className = 'f-label'; l.textContent = label;
-  f.append(l, control);
-  return f;
-}
+const groupRowOf = new Map();   // path -> its row, made once and kept, like the task rows, so a value being typed is not rebuilt away
 
-function cgroupBox(path) {
-  const box = document.createElement('div');
-  box.className = path === '/' ? 'cg root' : 'cg';
-  const head = document.createElement('header');
-  const name = document.createElement('span'); name.className = 'path'; name.textContent = path;
-  head.append(name);
-  // What the cgroup is, then what it is set to: the name and the two buttons that act on the box
-  // itself stay on one line, and each setting gets a line of its own so the labels line up down
-  // the box instead of running together with the name.
-  const settings = document.createElement('div'); settings.className = 'settings';
-  if (path !== '/') {   // the root has neither file: weight only ranks siblings, and its cpuset is fixed
-    const w = document.createElement('input');
-    w.type = 'number'; w.min = 1; w.max = 10000;
-    onSet(w, `cgroup-weight ${path}`);
-    box.weight = w;
-    box.cpus = cpuMask('', (want) => `cgroup-cpus ${path} ${want}`);
-    settings.append(field('weight', w, 'cpu.weight, against its siblings'),
-                    field('cpus', box.cpus, 'cpuset.cpus'));
-  }
-  const child = document.createElement('button');
-  child.textContent = '+ cgroup'; child.title = `create a cgroup under ${path}`;
-  child.onclick = () => enqueue(() => newGroup(path));
-  box.addBtn = child;
-  // A disabled button does not take mouse events, and with them goes its tooltip -- which is the
-  // one moment the explanation is wanted. The wrapper is not disabled, so it still answers a hover.
-  box.addWrap = document.createElement('span'); box.addWrap.append(child);
-  head.append(box.addWrap);
-  if (path !== '/') {
-    const del = document.createElement('button'); del.className = 'rm'; del.textContent = '\u2715';
-    del.title = `destroy ${path} (it must have no tasks and no children)`;
-    del.onclick = () => enqueue(() => delGroup(path));
-    box.delBtn = del;
-    box.delWrap = document.createElement('span'); box.delWrap.className = 'rm'; box.delWrap.append(del);
-    head.append(box.delWrap);
-  }
-  box.members = document.createElement('div'); box.members.className = 'members';
-  box.kids = document.createElement('div'); box.kids.className = 'kids';
-  box.append(head, settings, box.members, box.kids);
-  // A cgroup is where its tasks are, so moving a task is dragging its chip into the box. The
-  // innermost box under the pointer takes the drop, not its ancestors, because the boxes nest.
-  box.ondragover = (e) => {
+// A cgroup is where its tasks are, so moving a task is dragging its chip onto the cgroup's row, or
+// onto any row already in that cgroup. The cgroup's row is the one highlighted, whichever row is
+// under the pointer; it is cleared on leaving the table as well as on the drop, since dragging out
+// of the page never fires a drop.
+const TASK_DRAG = 'application/x-kstep-task';
+let dropRow = null;
+const clearDrop = () => { dropRow?.classList.remove('drop'); dropRow = null; };
+function dropTarget(tr, pathOf) {
+  tr.ondragover = (e) => {
     if (!e.dataTransfer.types.includes(TASK_DRAG)) return;
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    if (dropBox !== box) { dropBox?.classList.remove('drop'); dropBox = box; box.classList.add('drop'); }
+    const g = groupRowOf.get(pathOf());
+    if (dropRow !== g) { clearDrop(); dropRow = g; g?.classList.add('drop'); }
   };
-  box.ondrop = (e) => {
+  tr.ondrop = (e) => {
     const id = e.dataTransfer.getData(TASK_DRAG);
     if (!id) return;
-    e.preventDefault(); e.stopPropagation();
+    e.preventDefault();
     clearDrop();
-    enqueue(() => cmd(`cgroup-attach ${path} ${id}`));
+    enqueue(() => cmd(`cgroup-attach ${pathOf()} ${id}`));
   };
-  return box;
 }
-// One box is highlighted at a time; it is cleared on leaving the tree as well as on the drop,
-// since dragging out of the page never fires a drop.
-const TASK_DRAG = 'application/x-kstep-task';
-let dropBox = null;
-const clearDrop = () => { dropBox?.classList.remove('drop'); dropBox = null; };
-$('cgroup-tree').addEventListener('dragleave', (e) => { if (!e.relatedTarget) clearDrop(); });
-$('cgroup-tree').addEventListener('dragend', clearDrop);
+$('tasks').addEventListener('dragleave', (e) => { if (!e.relatedTarget) clearDrop(); });
+$('tasks').addEventListener('dragend', clearDrop);
+
+// A disabled button does not take mouse events, and with them goes its tooltip -- which is the
+// one moment the explanation is wanted. The wrapper is not disabled, so it still answers a hover.
+function wrapped(text, title, onclick) {
+  const b = document.createElement('button'); b.textContent = text; b.title = title; b.onclick = onclick;
+  const w = document.createElement('span'); w.append(b);
+  return [b, w];
+}
+
+function groupRow(path) {
+  const tr = $('tasks').querySelector('tbody').insertRow();
+  tr.className = 'group';
+  // the task columns up to affinity (a cgroup's is its cpuset), then one cell across the task's
+  // cpu time, policy, parameter and weight for cpu.weight, then the actions
+  for (let i = 0; i <= AFF; i++) tr.insertCell();
+  const weightCell = tr.insertCell(); weightCell.colSpan = ACT - AFF - 1;
+  const actCell = tr.insertCell();
+  const name = document.createElement('span'); name.className = 'path'; name.textContent = path;
+  tr.cells[0].append(name);
+  if (path !== '/') {   // the root has neither file: weight only ranks siblings, and its cpuset is fixed
+    // cpu.weight as the kernel has it, 1..10000 with 100 the default, labelled so it is not read
+    // in the tasks' unit next to it: the kernel maps 100 to a nice-0 task's 1024.
+    const w = document.createElement('input');
+    w.type = 'number'; w.min = 1; w.max = 10000;
+    w.title = 'cpu.weight, against its siblings: 100 (the default) weighs as much as a nice-0 task, 1024';
+    onSet(w, `cgroup-weight ${path}`);
+    const label = document.createElement('span'); label.className = 'f-label'; label.textContent = 'cpu.weight ';
+    tr.weight = w; weightCell.append(label, w);
+    tr.cpus = cpuMask('cpuset.cpus: the CPUs its tasks may use', (want) => `cgroup-cpus ${path} ${want}`);
+    tr.cells[AFF].append(tr.cpus);
+  }
+  [tr.addBtn, tr.addWrap] = wrapped('+ cgroup', `create a cgroup under ${path}`, () => enqueue(() => newGroup(path)));
+  actCell.append(tr.addWrap);
+  if (path !== '/') {
+    [tr.delBtn, tr.delWrap] = wrapped('\u2715', `destroy ${path} (it must have no tasks and no children)`, () => enqueue(() => delGroup(path)));
+    tr.delBtn.className = 'rm';
+    actCell.append(' ', tr.delWrap);
+  }
+  dropTarget(tr, () => path);
+  return tr;
+}
 
 function renderGroups() {
+  const tb = $('tasks').querySelector('tbody');
   const paths = groupPaths();
-  // one pass over the tasks rather than one per cgroup: every box asks the same question
-  const byGroup = new Map();
-  for (const t of tasks) {
-    if (!t.alive || t.stat?.cgroup === undefined) continue;
-    if (!byGroup.has(t.stat.cgroup)) byGroup.set(t.stat.cgroup, []);
-    byGroup.get(t.stat.cgroup).push(t.id);
-  }
   const live = new Set(paths);
-  for (const [path, box] of boxes) if (!live.has(path)) { box.remove(); boxes.delete(path); }
-  for (const path of paths) {                       // parents come first, so a child finds its box
-    let box = boxes.get(path);
-    if (!box) { box = cgroupBox(path); boxes.set(path, box); }
-    const parent = path === '/' ? null : path.slice(0, path.lastIndexOf('/')) || '/';
-    const host = parent === null ? $('cgroup-tree') : boxes.get(parent)?.kids ?? $('cgroup-tree');
-    if (box.parentElement !== host) host.append(box);
+  for (const [path, tr] of groupRowOf) if (!live.has(path)) { tr.remove(); groupRowOf.delete(path); }
+  // The outline: a cgroup's row, its tasks, then each child cgroup the same way, one step in.
+  const order = [];
+  const walk = (path, depth) => {
+    let tr = groupRowOf.get(path);
+    if (!tr) { tr = groupRow(path); groupRowOf.set(path, tr); }
+    tr.style.setProperty('--depth', depth);
+    const members = tasks.filter((t) => t.alive && t.stat?.cgroup === path);
+    const kids = paths.filter((p) => p !== '/' && parentOf(p) === path);
     const g = groups.get(path) ?? {};
-    if (path !== '/') { sync(box.weight, g.weight); sync(box.cpus, g.cpus); }
-    // members, in their figure colours, so a task is the same colour here as in Placement
-    const members = byGroup.get(path) ?? [];
-    // cgroup v2's no-internal-process rule: a non-root cgroup holds tasks or controlled children,
-    // never both, and the driver rejects the create rather than half-making one. The root is
-    // exempt, so its button never goes dead. Said on the button because the reason is the remedy.
     if (path !== '/') {
-      box.addBtn.disabled = members.length > 0;
-      box.addWrap.title = box.addBtn.title = members.length
+      sync(tr.weight, g.weight); sync(tr.cpus, g.cpus);
+      // cgroup v2's no-internal-process rule: a non-root cgroup holds tasks or controlled children,
+      // never both, and the driver rejects the create rather than half-making one. The root is
+      // exempt, so its button never goes dead. Said on the button because the reason is the remedy.
+      tr.addBtn.disabled = members.length > 0;
+      tr.addWrap.title = tr.addBtn.title = members.length
         ? `move the ${plural(members.length, 'task')} out of ${path} first: a cgroup cannot hold both tasks and controlled children`
         : `create a cgroup under ${path}`;
       // rmdir cannot take a directory with anything in it, so the driver refuses the same thing.
-      box.delBtn.disabled = members.length > 0 || paths.some((p) => p.startsWith(path + '/'));
-      box.delWrap.title = box.delBtn.title = box.delBtn.disabled
+      tr.delBtn.disabled = members.length > 0 || kids.length > 0;
+      tr.delWrap.title = tr.delBtn.title = tr.delBtn.disabled
         ? `empty ${path} first: a cgroup with tasks or children cannot be destroyed`
         : `destroy ${path}`;
     }
-    const ids = members.join();
-    if (box.members.dataset.ids !== ids) {
-      box.members.dataset.ids = ids;
-      box.members.replaceChildren(...members.map((id) => {
-        const c = document.createElement('span'); c.className = 'task-chip';
-        c.style.background = colorOf(id); c.textContent = id;
-        c.title = `task ${id} \u2014 drag into another cgroup to move it`;
-        c.draggable = true;
-        c.ondragstart = (e) => { e.dataTransfer.setData(TASK_DRAG, String(id)); e.dataTransfer.effectAllowed = 'move'; };
-        return c;
-      }));
+    order.push(tr);
+    for (const t of members) {
+      const r = rowOf.get(t.id);
+      if (r) { r.style.setProperty('--depth', depth + 1); order.push(r); }
     }
-  }
+    for (const k of kids) walk(k, depth + 1);
+  };
+  walk('/', 0);
+  // Rows into that order with the fewest moves: a moved row drops its focus, so a row already
+  // in place is left alone.
+  order.forEach((tr, i) => { if (tb.rows[i] !== tr) tb.insertBefore(tr, tb.rows[i] ?? null); });
 }
 
 // ---- queues: what each CPU picks between, one block per scheduling class that has something
