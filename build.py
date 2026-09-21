@@ -76,8 +76,22 @@ def build():
 
 
 def serve(port: int):
+    # Everything the page fetches is versioned (?v=stamp) except index.html itself, and a plain
+    # http.server sends no Cache-Control, so a browser keeps a heuristically-fresh copy of it and
+    # an edit to the page does not show. no-cache still allows a conditional request, so an
+    # unchanged file is a 304, not a re-download.
+    import http.server
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, directory=str(SITE), **kw)
+
+        def end_headers(self):
+            self.send_header("Cache-Control", "no-cache")
+            super().end_headers()
+
     print(f"http://localhost:{port}/")
-    os.execvp(sys.executable, [sys.executable, "-m", "http.server", "--bind", "127.0.0.1", "--directory", str(SITE), str(port)])
+    http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
 
 
 def deploy(version: str):

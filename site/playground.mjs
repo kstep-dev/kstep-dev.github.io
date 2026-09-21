@@ -44,8 +44,8 @@ const tasks = [];            // [{id, stat, alive}] in creation order; the drive
 let domains = [];            // the sched domains the kernel built, refreshed with every snapshot
 const snapshots = [];        // per tick: {tasks: Map(id->stat), cpus: Map(cpu->stat)}; the run, and the x axis
 let ncpus = 1;
-let cpuRecords = new Map();
-let lastShm = null;      // the last decoded shared region, filed into snapshots by step()
+let cpuRecords = new Map();   // per CPU, with the class queues on it joined in as .fair and .rt (see cmd)
+let taskRecords = new Map();  // per task, with its class's record joined in as .fair or .rt
 const ms = (ns) => ns === undefined ? '' : (ns / 1e6).toFixed(1);
 // Colours are fixed per creation order, so a task keeps its colour in the charts after it exits.
 const colorOf = (task) => { const i = tasks.findIndex(t => t.id === task); return i < 0 ? 'gray' : `hsl(${(i * 67) % 360}, 60%, 50%)`; };   // comma syntax: Safari's canvas parser
@@ -64,9 +64,10 @@ const MAX_CPUS = 32;
 // which is what lets big and little cores share a cluster, as an arm64 DSU does. It is what the
 // hardware is, so it is sent once at boot; changing it under a running kernel would reinterpret
 // PELT signals gathered at the old capacity.
-// kSTEP's spec is LEVEL=group|group;... with every online CPU in exactly one group per level:
-// threads of a core form an SMT group, cores of a cluster a CLS group, and a socket is both the
-// MC (shared last-level cache) and the PKG group. CPUs are numbered 1.. across the tree in order.
+// kSTEP's spec is KEY=group|group;... : threads of a core form an SMT group, cores of a cluster a
+// CLS group, and a socket is both the MC (shared last-level cache) and the PKG group, named only
+// when there is more than one. A CPU not named at a level is alone there. CAP groups are
+// cpulist:capacity. CPU 0 is never named; CPUs are numbered 1.. across the tree in order.
 const core = (threads = 1, cap = 1024) => ({ threads, cap });
 const mach = (...sockets) => ({ sockets });   // socket -> cluster -> cores
 const one = (...cores) => mach([cores]);      // the common machine: one socket, one cluster
@@ -108,9 +109,20 @@ function coreCpus(m, si, ci, oi) {
   }
   return [];
 }
-const groupSpec = (m, id) => { const g = new Map(); for (let c = 1; c <= nCpus(m); c++) { const k = id(m, c); if (!g.has(k)) g.set(k, []); g.get(k).push(c); } return ['0', ...[...g.values()].map(l => l.join(','))].join('|'); };
-const TOPO_LEVELS = ['SMT', 'CLS', 'MC', 'PKG'];   // the levels topoSpec names, in order
-const topoSpec = (m) => `SMT=${groupSpec(m, coreOf)};CLS=${groupSpec(m, clusterOf)};MC=${groupSpec(m, socketOf)};PKG=${groupSpec(m, socketOf)}`;
+const groupSpec = (m, id) => { const g = new Map(); for (let c = 1; c <= nCpus(m); c++) { const k = id(m, c); if (!g.has(k)) g.set(k, []); g.get(k).push(c); } return [...g.values()].map(l => l.join(',')).join('|'); };
+// Only what differs from a machine of single-thread cores in one socket: SMT when a core has
+// threads, CLS always (the form always has clusters), MC and PKG when there are several sockets.
+function topoSpec(m) {
+  const parts = [];
+  if (allCores(m).some(c => c.threads > 1)) parts.push(`SMT=${groupSpec(m, coreOf)}`);
+  parts.push(`CLS=${groupSpec(m, clusterOf)}`);
+  if (m.sockets.length > 1) parts.push(`MC=${groupSpec(m, socketOf)}`, `PKG=${groupSpec(m, socketOf)}`);
+  const caps = new Map();
+  capsOf(m).forEach((cap, i) => { if (cap !== 1024) caps.set(cap, [...(caps.get(cap) ?? []), i + 1]); });
+  if (caps.size) parts.push(`CAP=${[...caps].map(([cap, cpus]) => `${cpus.join(',')}:${cap}`).join('|')}`);
+  return parts.join(';');
+}
+const topoLevels = (spec) => spec.split(';').map(e => e.split('=')[0]).filter(k => k !== 'CAP');   // the levels a spec names
 let layout = { first: 0, last: 0, width: 0, visible: 0 };   // the ticks the charts are showing
 // ---- the window: which ticks the charts show ----
 // The wheel pans and CELL -- the column width -- zooms; between them they fix the window, and
@@ -236,17 +248,20 @@ function sample(fig, key, tick) {
 const FIGURES = {
   placement: { title: 'Placement', domain: 'task', get: (r) => r.cpu, integer: true, invert: true, lanes: true,
     note: 'each CPU\u2019s row shared out among the tasks on it at that tick, in their own colours: solid is the one that ran, faint the ones queued behind it' },
-  cputime:   { title: 'CPU time', domain: 'task', get: (r) => NS(r.sum_exec_runtime),
+  cputime:   { title: 'cpu time', domain: 'task', get: (r) => NS(r.sum_exec_runtime),
     note: 'slope is that task’s share of the machine: parallel lines are an even split, a fan is a weighted one, a flat line is a task getting nothing' },
-  vruntime:  { title: 'Virtual runtime', domain: 'task', get: (r) => NS(r.vruntime),
-    note: 'runtime divided by weight, so under a fair split every task’s line climbs at the same rate whatever its nice' },
-  deadline:  { title: 'Deadline', domain: 'task', get: (r) => NS(r.deadline),
+  // fair-class metrics read the task's fair record, so a task under fifo or rr draws a gap
+  vruntime:  { title: 'vruntime', domain: 'task', get: (r) => r.fair && NS(r.fair.vruntime),
+    note: 'runtime divided by weight, so under a fair split every task’s line climbs at the same rate whatever its nice — among tasks in the same cgroup, each cgroup having a queue and a virtual clock of its own' },
+  lag:       { title: 'lag', domain: 'task', get: (r) => r.fair && NS(r.fair.lag),
+    note: 'the queue’s average vruntime minus the task’s, so zero is exactly fair, above it the task is owed time and below it has run ahead; unlike vruntime it is comparable across queues and does not jump when a task moves' },
+  deadline:  { title: 'deadline', domain: 'task', get: (r) => r.fair && NS(r.fair.deadline),
     note: 'EEVDF runs the eligible task with the earliest deadline, so the lowest line is the one that should be running' },
-  queues:    { title: 'Runnable tasks', domain: 'cpu',  get: (r) => r.h_nr_runnable, integer: true,
+  queues:    { title: 'Runnable tasks', domain: 'cpu',  get: (r) => r.fair?.h_nr_runnable, integer: true,
     note: 'the balancer’s own count, h_nr_runnable, which leaves out a task queued only by delayed dequeue: it moves work to even these out, per unit of capacity rather than per task' },
-  util:      { title: 'Fair utilization', domain: 'cpu',  get: (r) => r.cfs_util_avg,
+  util:      { title: 'Fair utilization', domain: 'cpu',  get: (r) => r.fair?.util_avg,
     note: 'PELT, where 1024 is a full CPU; it is frequency-invariant, so it says what the work would need at full speed' },
-  load:      { title: 'Fair load', domain: 'cpu',  get: (r) => r.cfs_load_avg,
+  load:      { title: 'Fair load', domain: 'cpu',  get: (r) => r.fair?.load_avg,
     note: 'weighted demand, not a task count: nice changes it without any task appearing or leaving' },
 };
 
@@ -484,7 +499,7 @@ function coreBox(c, cores, oi, si, ci, room, lastCore) {
   el.append(h);
   // Two numbers rather than a chip per thread. "cpu capacity" is the kernel's own term
   // (arch_scale_cpu_capacity) and says which it is: per CPU, not the core's total, so each of a
-  // core's threads gets this value -- which is what cpu-cap takes. Edits go through
+  // core's threads gets this value -- which is what CAP takes. Edits go through
   // refreshLayout, not renderLayout, so a box is not rebuilt under the cursor mid-type.
   const field = (label, opts, get, set) => {
     const row = document.createElement('div'); row.className = 'caprow';
@@ -550,15 +565,12 @@ function setCpuDraft(m) {
   draft = asMachine(m);
   renderLayout();
 }
-// Capacity and frequency are the two per-CPU scales, and both are live commands that rebuild what
-// they need to, so they are controls here rather than in the machine form: capacity is what the
-// hardware is (and rebuilds the sched domains, so the table below reacts), frequency is what
-// cpufreq does to it while the machine runs. Each driver line carries the whole set, because the
-// kmod's spec is full state and not a delta -- an unnamed CPU goes back to 1024.
+// Frequency is the one per-CPU scale that moves while the machine runs, as cpufreq does to it, so
+// it is a live control here; capacity is what the hardware is and belongs to the machine form
+// (CAP in the cpu-topo line). One driver line per CPU changed: `cpu-freq <cpu> <scale>`.
 const SCALES = [1024, 768, 512, 256, 128];
 const FREQ = 1;   // the one hardware number that moves while it runs, so the only one here
 const cellSelect = (cpu, col) => $('cpu-stats').tBodies[0].rows[cpu - 1]?.cells[col].firstChild;
-const scaleSpec = (col) => Array.from({ length: ncpus }, (_, i) => `${i + 1}=${cellSelect(i + 1, col)?.value ?? 1024}`).join();
 function scaleSelect(cpu, col) {
   const verb = 'cpu-freq';
   const el = document.createElement('select');
@@ -568,7 +580,7 @@ function scaleSelect(cpu, col) {
   el.onchange = () => {
     el.dataset.pending = '1';
     enqueue(async () => {
-      const r = await cmd(`${verb} ${scaleSpec(col)}`);
+      const r = await cmd(`${verb} ${cpu} ${el.value}`);
       delete el.dataset.pending;
       if (r.error) el.blur();   // sync() leaves a focused control alone, and the refresh puts the kernel's value back
     });
@@ -586,7 +598,7 @@ function renderCpus() {
   const cores = allCores(machine).length;
   const clusters = machine.sockets.reduce((n, cl) => n + cl.length, 0);
   const sockets = machine.sockets.length;
-  $('running-cpus').textContent = `· ${plural(ncpus, 'CPU')} · ${plural(cores, 'core')}`
+  $('running-cpus').textContent = `${plural(ncpus, 'CPU')} · ${plural(cores, 'core')}`
     + (clusters > 1 ? ` · ${plural(clusters, 'cluster')}` : '')
     + (sockets > 1 ? ` · ${plural(sockets, 'socket')}` : '');
   for (let cpu = 1; cpu <= ncpus; cpu++) {
@@ -603,12 +615,13 @@ function renderCpus() {
     // The balancer's own count, and the runqueue's raw depth after it when the two disagree --
     // which is the whole reason to have both: what is on the queue and not in the balancer's
     // number is a real-time or deadline task, or one the delayed dequeue has yet to let go.
-    const runnable = r?.h_nr_runnable === undefined ? '—'
-      : r.nr_running === r.h_nr_runnable ? r.h_nr_runnable : `${r.h_nr_runnable} (${r.nr_running} queued)`;
+    const f = r?.fair;   // the fair class's root queue on this CPU: its numbers, not the runqueue's
+    const runnable = f?.h_nr_runnable === undefined ? '—'
+      : r.nr_running === f.h_nr_runnable ? f.h_nr_runnable : `${f.h_nr_runnable} (${r.nr_running} queued)`;
     const values = [
       !r ? '—' : r.idle ? 'idle' : r.current ? r.current : 'system task',
-      r?.cfs_util_avg ?? '—', r?.cfs_load_avg ?? '—', r?.cfs_runnable_avg ?? '—',
-      r?.min_vruntime === undefined ? '—' : ms(r.min_vruntime), r?.nr_switches ?? '—',
+      f?.util_avg ?? '—', f?.load_avg ?? '—', f?.runnable_avg ?? '—',
+      f?.min_vruntime === undefined ? '—' : ms(f.min_vruntime), r?.nr_switches ?? '—',
       runnable,
       r?.next_balance_in === undefined ? '—' : r.next_balance_in === 0 ? 'due' : r.next_balance_in];
     values.forEach((v, i) => {   // as renderTask does: an unchanged cell is not touched
@@ -699,17 +712,15 @@ function renderDomains() {
   }
   // The levels asked for that the kernel collapsed away: the page knows what it sent.
   const built = new Set(rows.map(d => d.name));
-  const gone = TOPO_LEVELS.filter(l => !built.has(l));
+  const gone = topoLevels(topoLine?.slice(9) ?? '').filter(l => !built.has(l));
   $('domains-collapsed').textContent = !domains.length ? ''
     : gone.length ? `Collapsed as redundant: ${gone.join(', ')}.` : '';
 }
 
-// The machine reaches the kernel as cli commands, sent once the driver is ready: capacity
-// first (what the hardware is), then the topology that rebuilds the sched domains.
+// The machine reaches the kernel as one cli command, sent once the driver is ready: the topology,
+// capacities included, which rebuilds the sched domains.
 function cpuSetup(m) {
-  const caps = [];
-  capsOf(m).forEach((cap, i) => { if (cap !== 1024) caps.push(`${i + 1}=${cap}`); });
-  return [caps.length ? `cpu-cap ${caps.join(',')}` : null, `cpu-topo ${topoSpec(m)}`].filter(Boolean);
+  return [`cpu-topo ${topoSpec(m)}`];
 }
 
 // ---- the script: one uniform way to state an initial condition ----
@@ -717,36 +728,38 @@ function cpuSetup(m) {
 // machine, the tasks, and whatever is done to them. Two page-side conveniences, because the
 // driver has no notion of either: `tick N` steps N times, and `*` in a task
 // position means every task created so far.
-const MACHINE_VERBS = ['cpu-cap', 'cpu-topo'];
+const MACHINE_VERBS = ['cpu-topo'];
 const parseScript = (text) => text.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#'));
 // Every CPU the spec names; the machine's size is the highest of them, since cpu0 is the driver's.
 function cpusInTopo(spec) {
   let max = 0;
-  for (const n of spec.matchAll(/\d+/g)) max = Math.max(max, +n[0]);
+  for (const n of spec.replace(/:\d+/g, '').matchAll(/\d+/g)) max = Math.max(max, +n[0]);
   return max;
 }
-// The machine a script asks for, read back out of its cpu-topo and cpu-cap lines so the form can
+// The machine a script asks for, read back out of its cpu-topo line so the form can
 // show it. Rather than checking the shape field by field, the parse is confirmed by regenerating
 // the spec from it: if that matches the script's, the form states exactly this machine. If it does
 // not, the structure is still reported -- the CPU count and grouping are what they are -- with
 // `exact` false, and the caller shows the machine but refuses to edit it.
 function machineFromScript(script) {
-  const topo = script.find(l => l.startsWith('cpu-topo '))?.slice(9);
+  const topo = script.find(l => l.startsWith('cpu-topo '))?.slice(9).trim();
   if (!topo) return null;
   const level = (name) => topo.split(';').find(l => l.startsWith(name + '='))?.slice(name.length + 1);
   const parse = (spec) => (spec ?? '').split('|').map(g => g.split(',').flatMap(r => {
     const [a, b] = r.split('-').map(Number);
     return Array.from({ length: (b ?? a) - a + 1 }, (_, i) => a + i);
   })).filter(g => g.length && g[0] !== 0);
-  const smt = parse(level('SMT')), cls = parse(level('CLS')), mc = parse(level('MC'));
-  const capSpec = script.find(l => l.startsWith('cpu-cap '))?.slice(8) ?? '';
-  const caps = new Map();
-  for (const pair of capSpec.split(',').filter(Boolean)) {
-    const [cpu, v] = pair.split('=').map(Number);
-    caps.set(cpu, v);
-  }
   const n = cpusInTopo(topo);
-  if (!n || !cls.length) return null;
+  if (!n) return null;
+  // a level not named leaves every CPU alone; the form's socket is the whole machine when unnamed
+  const alone = () => Array.from({ length: n }, (_, i) => [i + 1]);
+  const smt = level('SMT') ? parse(level('SMT')) : alone(), cls = level('CLS') ? parse(level('CLS')) : alone();
+  const mc = level('PKG') ? parse(level('PKG')) : [];
+  const caps = new Map();
+  for (const g of (level('CAP') ?? '').split('|').filter(Boolean)) {
+    const [list, v] = g.split(':');
+    for (const cpu of parse(list).flat()) caps.set(cpu, +v);
+  }
   const byFirst = (a, b) => a[0] - b[0];
   const sockets = (mc.length ? mc : [Array.from({ length: n }, (_, i) => i + 1)]).sort(byFirst).map(sock =>
     // the clusters this socket holds, and in each the cores, one per SMT group
@@ -759,8 +772,7 @@ function machineFromScript(script) {
   const m = mach(...sockets);
   if (nCpus(m) !== n) return null;
   // the parse is right exactly when it reproduces what the script said
-  const capLine = capsOf(m).map((c, i) => c !== 1024 ? `${i + 1}=${c}` : null).filter(Boolean).join(',');
-  m.exact = topoSpec(m) === topo && capLine === capSpec;
+  m.exact = topoSpec(m) === topo;
   return m;
 }
 
@@ -770,7 +782,7 @@ const scriptWith = (script, m) => [...cpuSetup(m), ...script.filter(l => !MACHIN
 
 // ---- task table: rows are created once and updated in place (no rebuild, no flicker) ----
 const rowOf = new Map();
-const AFF = 4, NICE = 5, POL = 6, GRP = 11, ACT = 12;   // columns holding controls
+const STATE = 1, CPU = 2, AFF = 3, TIME = 4, POL = 5, NICE = 6, WEIGHT = 7, ACT = 8;   // where the task is and what it got, then its class, parameter and the weight that follows
 const AFF_TITLE = 'CPUs the task may run on';
 // A row's controls are inputs and views at once: the user types into them, but the same
 // settings get changed behind their back -- a scenario's setup script sends driver lines
@@ -822,6 +834,24 @@ const onSet = (el, verb, tail = '') => el.onchange = () => {
     if (r.error) el.blur();   // sync() leaves a focused control alone
   });
 };
+// Which parameter the row shows, from the policy the kernel reports. A real-time task is ordered
+// by priority and its nice is inert; SCHED_IDLE ignores nice as well, since the class pins the
+// entity at a fixed minimal weight. Neither is hidden: an inert nice is greyed with the reason,
+// because "this knob does nothing here" is the thing the table is there to say.
+function setParam(tr, policy) {
+  if (policy === undefined) return;
+  const [nice, prio] = tr.cells[NICE].children;
+  const rt = policy === 'fifo' || policy === 'rr';
+  nice.hidden = rt;
+  prio.hidden = !rt;
+  // under SCHED_IDLE the nice is kept but not read, so it stays settable, as the kernel has it, and
+  // is drawn inert rather than disabled: what it says is "this knob does nothing here"
+  nice.classList.toggle('inert', policy === 'idle');
+  nice.title = policy === 'idle'
+    ? 'SCHED_IDLE ignores nice: the class runs the task at a fixed minimal weight (3) whatever it is set to. The value is kept and comes back into force under normal or batch'
+    : 'nice, the fair classes\u2019 share knob: lower is a larger share';
+}
+
 // One task's row, created on first sight and updated in place. Per task rather than per
 // table, so a record can be shown the moment it arrives.
 function renderTask(t) {
@@ -830,22 +860,41 @@ function renderTask(t) {
   if (!t.alive) { if (tr) { tr.remove(); rowOf.delete(t.id); } return; }
   if (!tr) {
     tr = tb.insertRow(); rowOf.set(t.id, tr);
-    for (let i = 0; i < 13; i++) tr.insertCell();   // one per <th>, the slice column having gone
+    for (let i = 0; i < 9; i++) tr.insertCell();   // one per <th>; vruntime and deadline are queue-local, so they live under Scheduler
     tr.cells[ACT].style.whiteSpace = 'nowrap';
-    tr.cells[0].style.background = colorOf(t.id); tr.cells[0].style.width = '.8rem';
+    // the task's number in its figure colour, the same chip as in the cgroup tree, so a task is
+    // one mark wherever it appears; the cgroup itself is read off the tree, where the chip sits
+    const chip = document.createElement('span'); chip.className = 'task-chip';
+    chip.style.background = colorOf(t.id); chip.textContent = t.id;
+    tr.cells[0].append(chip);
+    // The scheduling parameter, which is not one control but whichever one the task's policy
+    // reads: nice for the fair classes, a real-time priority for fifo and rr. One cell holds both
+    // and shows the one that is in force, so a task's row never offers a knob its class ignores.
     const nice = document.createElement('input'); nice.type = 'number'; nice.min = -20; nice.max = 19; nice.value = 0; nice.style.width = '2.9rem';
-    onSet(nice, `nice ${t.id}`);
-    tr.cells[NICE].append(nice);
+    // each parameter is set together with the class that reads it, as sched_setattr takes them:
+    // the row's current policy goes with the new value
+    const setParamWith = (el, verb) => el.onchange = () => { const pol = tr.cells[POL].firstElementChild.value; el.dataset.pending = '1';
+      enqueue(async () => { const r = await cmd(`${verb} ${t.id} ${pol} ${el.value}`); delete el.dataset.pending; if (r.error) el.blur(); }); };
+    setParamWith(nice, 'policy-fair');
+    const prio = document.createElement('input'); prio.type = 'number'; prio.min = 1; prio.max = 99; prio.value = 80; prio.style.width = '2.9rem';
+    prio.title = 'real-time priority, 1..99: it orders fifo and rr tasks against each other only, higher first, '
+      + 'and any of them outranks every fair task. The kernel sets it together with the policy, so picking fifo or rr sends this value. '
+      + 'The task\u2019s nice is kept meanwhile and comes back into force when it returns to a fair policy.';
+    setParamWith(prio, 'policy-rt');
+    tr.cells[NICE].append(nice, prio);
     // scheduling class; the policies are grouped by the class that implements them, since that is
     // what decides the task's fate -- any real-time task outranks every fair one. The option values
-    // stay the driver's own words. Real-time tasks run at one fixed priority in the driver.
+    // stay the driver's own words.
     const pol = document.createElement('select'); pol.title = 'scheduling policy, grouped by scheduling class';
     pol.replaceChildren(...[['fair', ['normal', 'batch', 'idle']], ['real-time', ['fifo', 'rr']]].map(([label, vs]) => {
       const g = document.createElement('optgroup'); g.label = label;
       g.replaceChildren(...vs.map(v => new Option(v, v)));
       return g;
     }));
-    onSet(pol, `policy ${t.id}`);
+    // the class, with the parameter it reads: a real-time priority is required by the kernel, so the
+    // spinner's value goes along (80 until set); a fair policy alone keeps the task's nice
+    pol.onchange = () => { const v = pol.value, rt = v === 'fifo' || v === 'rr'; pol.dataset.pending = '1';
+      enqueue(async () => { const r = await cmd(rt ? `policy-rt ${t.id} ${v} ${prio.value}` : `policy-fair ${t.id} ${v}`); delete pol.dataset.pending; if (r.error) pol.blur(); }); };
     tr.cells[POL].append(pol);
     const aff = cpuMask(AFF_TITLE, (want) => `affinity ${t.id} ${want}`);
     tr.cells[AFF].append(aff);
@@ -858,20 +907,21 @@ function renderTask(t) {
   }
   const s = t.stat ?? {};
   sync(tr.cells[NICE].firstElementChild, s.nice);
+  if (s.rt_priority) sync(tr.cells[NICE].lastElementChild, s.rt_priority);   // 0 under a fair policy: keep the last real value
   sync(tr.cells[POL].firstElementChild, s.policy);
+  setParam(tr, s.policy);
   sync(tr.cells[AFF].firstElementChild, s.cpus);
-  // the cgroup is reported, not set here: a task is moved by dragging its chip in the tree, which
-  // is the one place the move can be seen against the nesting that gives it its meaning
-  if (s.cgroup !== undefined && tr.cells[GRP].textContent !== s.cgroup) tr.cells[GRP].textContent = s.cgroup;
   if (s.state !== undefined) tr.cells[ACT].firstElementChild.textContent = s.state === 'running' || s.state === 'runnable' ? 'pause' : 'wake';
-  [t.id, s.state ?? '', s.cpu, undefined, undefined, undefined, s.weight, ms(s.sum_exec_runtime), ms(s.vruntime), ms(s.deadline)]
-    .forEach((v, i) => { if (v === undefined) return; const text = String(v); if (tr.cells[i + 1].textContent !== text) tr.cells[i + 1].textContent = text; });
+  // weight is a fair-class number, read off the task's fair record; the real-time classes never have one
+  [[STATE, s.state ?? ''], [CPU, s.cpu], [TIME, ms(s.sum_exec_runtime)], [WEIGHT, s.policy === undefined ? undefined : s.fair?.weight ?? '']]
+    .forEach(([i, v]) => { if (v === undefined) return; const text = String(v); if (tr.cells[i].textContent !== text) tr.cells[i].textContent = text; });
 }
 
 // ---- cgroups: the tree the kernel reports after every command (path -> {weight, cpus}, from
-// kmod/shm.h), root "/" first. Rows are indented by depth and carry "add child" and, below the
-// root, "delete"; the weight and cpuset controls are views of the kernel's values, like the task
-// table's, so a change made behind the UI's back shows up. ----
+// kmod/shm.h), root "/" first. The tree is configuration and membership only -- what the reader
+// set, drawn as nesting; the weight and cpuset controls are views of the kernel's values, like
+// the task table's, so a change made behind the UI's back shows up. What the scheduler makes of
+// it is per CPU and changes every tick, so it is drawn under Queues (renderQueues). ----
 let groups = new Map();
 let ngroups = 0;
 async function newGroup(parent) {
@@ -1008,6 +1058,102 @@ function renderGroups() {
   }
 }
 
+// ---- queues: what each CPU picks between, one block per scheduling class that has something
+// queued there, the real-time class above the fair one because any of its rows outranks the whole
+// fair tree. The real-time block is the priority lists: rows by priority, then by place in the
+// list, the head of the highest list being the pick. The fair block is a cfs_rq per (CPU,
+// cgroup), indented like the cgroups because that is how the pick descends: the root queue
+// chooses between its own tasks and the child cgroups' entities, and the chosen cgroup's queue
+// chooses again inside it -- the root queue's rows first and a cgroup entity's row followed by
+// the rows of its own queue, one level in. Tasks and group entities share the columns because
+// they share the block in kmod/shm.h, and every flag shown -- eligible, curr, the next pick --
+// and the share are the kernel's, read from the class's records; this code only lays them out.
+// Rebuilt whole every command; nothing here is typed into. ----
+let entities = [];   // the cgroups' group entities; a task's fair record is on the task itself (stat.fair)
+const QUEUE_COLS = [   // lag is printed always signed, so the column holds its width
+  ['weight', (e) => e.weight, 'the entity\u2019s weight against its siblings on this queue, which is the only weight the scheduler compares: a task\u2019s from its nice, a cgroup\u2019s from cpu.weight divided between the CPUs by calc_group_shares'],
+  ['share', (e) => `${(e.share * 100).toFixed(e.share < 0.1 ? 1 : 0)}%`, 'the share of this CPU the entity gets while everything queued stays queued: its weight over the queue\u2019s total, times its parent cgroup\u2019s share -- 1024 of 2048 on the root queue, then 1024 of 3072 inside the cgroup, is a sixth'],
+  ['eligible', (e) => e.eligible ? '\u2713' : '', 'entity_eligible: lag \u2265 0, so EEVDF may pick it; an ineligible row is also greyed'],
+  ['lag', (e) => (e.lag < 0 ? '\u2212' : '+') + ms(Math.abs(e.lag)), 'the queue\u2019s average vruntime minus this entity\u2019s, in virtual ms: zero is fair, positive is owed time; EEVDF only picks entities with lag \u2265 0. Live while queued; the kernel\u2019s saved se->vlag, which place_entity restores, while not'],
+  ['vruntime', (e) => ms(e.vruntime), 'virtual ms on this queue\u2019s own clock: comparable only with the other rows of this queue'],
+  ['deadline', (e) => ms(e.deadline), 'vruntime plus the slice scaled by weight: among the eligible, the earliest runs'],
+  ['slice left', (e) => e.curr ? ms(Math.max(0, e.deadline - e.vruntime)) : '', 'for the entity running at each level -- the task, and the cgroup entities above it, each curr on its own queue -- its deadline minus its vruntime in virtual ms: until it reaches zero it keeps the CPU (RUN_TO_PARITY), and then the eligible entity with the earliest deadline is picked'],
+];
+const parentOf = (p) => p.slice(0, p.lastIndexOf('/')) || '/';
+function queueRows(cpu, path, depth, byCpu, tb) {
+  // this cgroup's queued tasks on this CPU, by number, then its children's entities queued here, by path
+  const rows = [
+    ...tasks.filter((t) => t.alive && t.stat?.fair?.on_rq && t.stat.cgroup === path && t.stat.cpu === cpu).map((t) => ({ task: t, e: t.stat.fair })),
+    ...byCpu.filter((e) => e.on_rq && parentOf(e.cgroup) === path).sort((a, b) => a.cgroup.localeCompare(b.cgroup)).map((e) => ({ e })),
+  ];
+  for (const { task: t, e } of rows) {
+    const tr = tb.insertRow();
+    if (!e.eligible) tr.classList.add('ineligible');
+    if (e.curr) tr.classList.add('running');        // curr at this level: the running task, or the cgroup it runs under
+    else if (e.pick) tr.classList.add('next');      // what pick_eevdf would take instead, where that differs
+    const first = tr.insertCell(); first.style.paddingLeft = `${depth * 1.2}rem`;
+    if (t) first.append(chip(t));
+    else { const c = document.createElement('span'); c.className = 'path'; c.textContent = e.cgroup; first.append(c); }
+    for (const [, get] of QUEUE_COLS) tr.insertCell().textContent = get(e);
+    if (!t) queueRows(cpu, e.cgroup, depth + 1, byCpu, tb);   // the cgroup's own queue, indented beneath its entity
+  }
+}
+const chip = (t) => { const c = document.createElement('span'); c.className = 'task-chip'; c.style.background = colorOf(t.id); c.textContent = t.id; return c; };
+function classTable(cpu, label, note, cols, firstTitle) {
+  const box = document.createElement('div'); box.className = 'rq';
+  const head = document.createElement('header'); head.textContent = `cpu ${cpu} \u00b7 ${label}`;
+  if (note) { const n = document.createElement('span'); n.className = 'note'; n.textContent = note; head.append(' \u00b7 ', n); }
+  const table = document.createElement('table');
+  const th = table.createTHead().insertRow();
+  for (const [name, , title] of [['task', , firstTitle], ...cols]) { const c = document.createElement('th'); c.textContent = name; c.title = title; th.append(c); }
+  box.append(head, table);
+  return { box, tb: table.createTBody() };
+}
+function fairTable(cpu, byCpu) {
+  const { box, tb } = classTable(cpu, 'fair', '', QUEUE_COLS,
+    'a task, in its colour, or a cgroup\u2019s entity; indented rows are the queue inside that cgroup. \u25B6 is curr at its level: the task that ran this tick and the cgroup entities it ran under; \u25B7 is what pick_eevdf would take next, where that differs');
+  tb.parentElement.tHead.rows[0].cells[0].textContent = 'entity';
+  queueRows(cpu, '/', 0, byCpu, tb);
+  return box;
+}
+// The real-time class: one row per task on the CPU's rt_rq, by priority then by place in that
+// priority's list. FIFO runs the head until it yields; RR moves it to the tail when its timeslice
+// is spent. The header carries the bandwidth: what the class has used of its share of the period,
+// and "throttled" when that share is spent and the whole class is off the CPU until the next one.
+const RT_COLS = [
+  ['priority', ({ t }) => t.stat.rt_priority, 'the task\u2019s real-time priority, 1..99; the highest non-empty list is the one the class runs from, so a higher row outranks every row below it'],
+  ['policy', ({ t }) => t.stat.policy, 'fifo runs until it yields or blocks; rr gives way to the next task of the same priority when its timeslice is spent'],
+  ['slice left', ({ t, e }) => t.stat.policy === 'rr' ? `${e.time_slice} ms` : '', 'rr only: what remains of the 100 ms timeslice (RR_TIMESLICE, in ticks); at zero the task goes to the tail of its list. fifo has none'],
+];
+function rtTable(cpu, rq, rows) {
+  const used = `${(rq.rt_time / 1e6).toFixed(0)} of ${(rq.rt_runtime / 1e6).toFixed(0)} ms`;
+  const { box, tb } = classTable(cpu, 'real-time', rq.throttled ? `throttled, ${used} used` : `${used} used`, RT_COLS,
+    'a task, in its colour, in the order the class runs them: by priority, then by place in the priority\u2019s list. \u25B6 ran this tick; \u25B7 is the head of the highest list, which pick_next_task_rt would take, where that differs');
+  box.classList.add('rt');
+  box.firstElementChild.title = 'sched_rt_runtime_us of sched_rt_period_us: the real-time class gets this much of each 1 s period. rt_time is what it has used so far this period; when it reaches the runtime the class is throttled -- dequeued whole -- until the period ends, and the fair class gets the rest';
+  if (rq.throttled) box.classList.add('throttled');
+  rows.sort((a, b) => b.t.stat.rt_priority - a.t.stat.rt_priority || a.e.position - b.e.position);
+  for (const row of rows) {
+    const tr = tb.insertRow();
+    if (row.e.curr) tr.classList.add('running');
+    else if (row.e.pick) tr.classList.add('next');
+    tr.insertCell().append(chip(row.t));
+    for (const [, get] of RT_COLS) tr.insertCell().textContent = get(row);
+  }
+  return box;
+}
+function renderQueues() {
+  const blocks = [];
+  for (let cpu = 1; cpu <= ncpus; cpu++) {
+    const rt = tasks.filter((t) => t.alive && t.stat?.rt?.on_rq && t.stat.cpu === cpu).map((t) => ({ t, e: t.stat.rt }));
+    const rq = cpuRecords.get(cpu)?.rt;
+    if (rt.length && rq) blocks.push(rtTable(cpu, rq, rt));
+    const byCpu = entities.filter((e) => e.cpu === cpu);
+    if (byCpu.some((e) => e.on_rq) || tasks.some((t) => t.alive && t.stat?.fair?.on_rq && t.stat.cpu === cpu)) blocks.push(fairTable(cpu, byCpu));   // else idle: nothing to pick between
+  }
+  $('queues').replaceChildren(...blocks);
+}
+
 // ---- transport: kstep.mjs's cmd(), one command in flight at a time, with a transcript ----
 let vm = null;
 const LOG_MAX = 2000;   // lines kept in the transcript
@@ -1023,23 +1169,30 @@ async function cmd(line) {
   if (line !== null) append('> ' + line);
   const reply = await vm.cmd(line);
   append(JSON.stringify(reply), reply.error ? 'err' : '');
-  const st = lastShm = vm.shm();
+  const st = vm.shm();
   for (const e of vm.events()) append(JSON.stringify(e), 'event');   // the trace, in the log pane
-  cpuRecords = new Map(st.cpus.map(c => [c.cpu, c]));
+  // The region keeps each class's records in tables of their own (kmod/shm.h); the page joins
+  // them here, once: a CPU record carries the fair and real-time queues on it as .fair and .rt,
+  // a task record the class's view of the task the same way -- one of the two, by its policy.
+  const by = (rows, key) => new Map(rows.map(r => [r[key], r]));
+  const cfs = by(st.cfs, 'cpu'), rtq = by(st.rt, 'cpu'), fairOf = by(st.entities.filter(e => e.task), 'task'), rtOf = by(st.rt_entities, 'task');
+  cpuRecords = new Map(st.cpus.map(c => [c.cpu, { ...c, fair: cfs.get(c.cpu), rt: rtq.get(c.cpu) }]));
   // the cgroup tree is the kernel's, not the UI's: paths, weights and cpusets as they are now
-  groups = new Map(st.groups.filter(g => g.path !== '/').map(g => [g.path, { weight: g.weight, cpus: g.cpus }]));
-  const live = new Set(st.tasks.map(s => s.task));
-  for (const s of st.tasks) { const t = tasks.find(t => t.id === s.task); if (t) { t.stat = s; t.alive = true; renderTask(t); } }
+  groups = new Map(st.groups.filter(g => g.path !== '/').map(g => [g.path, g]));
+  entities = st.entities.filter(e => !e.task);
+  taskRecords = new Map(st.tasks.map(s => [s.task, { ...s, fair: fairOf.get(s.task), rt: rtOf.get(s.task) }]));
+  const live = new Set(taskRecords.keys());
+  for (const s of taskRecords.values()) { const t = tasks.find(t => t.id === s.task); if (t) { t.stat = s; t.alive = true; renderTask(t); } }
   for (const t of tasks) if (t.alive && !live.has(t.id)) { t.alive = false; renderTask(t); }
   domains = st.domains;
-  renderGroups(); renderCpus(); renderDomains();   // not draw(): the charts are a function of the ticks so far
+  renderGroups(); renderQueues(); renderCpus(); renderDomains();   // not draw(): the charts are a function of the ticks so far
   return reply;
 }
 // A step is one `tick`, and the snapshot it leaves behind is one column of every chart.
 async function step() {
   if ((await cmd('tick')).error) return;
   // the whole snapshot, so any figure can be plotted over the run without replaying it
-  snapshots.push({ tasks: new Map((lastShm?.tasks ?? []).map(t => [t.task, t])), cpus: new Map(cpuRecords) });
+  snapshots.push({ tasks: new Map(taskRecords), cpus: new Map(cpuRecords) });
   draw();
 }
 async function create() {
@@ -1050,15 +1203,21 @@ async function create() {
 let queue = Promise.resolve();
 const enqueue = (fn) => { queue = queue.then(fn).catch(e => setStatus('error: ' + e.message, true)); return queue; };
 
-// ---- clock: the ticks/s box drives it; 0 stops it, the step button stops it and ticks once ----
-let timer = 0;
+// ---- clock: play/pause runs it, the ticks/s box paces it, and step stops it and ticks once ----
+// Running is its own state rather than a 0 in the rate box, so pausing keeps the rate you picked.
+let timer = 0, running = true;
 function schedule() {
   clearTimeout(timer); timer = 0;
+  $('play').textContent = running ? '\u23f8' : '\u25b6';
+  $('play').title = running ? 'stop the clock' : 'run the clock';
   const rate = +$('speed').value || 0;
-  if (vm && rate > 0) timer = setTimeout(() => enqueue(step).then(schedule), 1000 / rate);
+  if (vm && running && rate > 0) timer = setTimeout(() => enqueue(step).then(schedule), 1000 / rate);
 }
-$('speed').onchange = schedule;
-$('step').onclick = () => { $('speed').value = 0; schedule(); enqueue(step); };
+function pause() { running = false; schedule(); }
+$('play').onclick = () => { running = !running; schedule(); };
+$('speed').onchange = schedule;                                 // re-paces without leaving the state
+$('step').onclick = () => { pause(); enqueue(step); };          // enabled while running: break in, then tick
+schedule();                                                     // the button's face comes from the state, not the markup
 $('create').onclick = () => enqueue(create);
 
 // ---- boot ----
@@ -1076,17 +1235,17 @@ const SCENARIOS = {
     text: 'Five equal tasks on two cores with two threads each. Change nice values and affinities, pause and wake tasks, and watch the scheduler react.' },
   fair: { title: 'Fair sharing', charts: ['placement', 'cputime', 'vruntime'],
     script: [...m_([[core(1)]]), 'create 3'],
-    text: 'Three equal tasks on one CPU. EEVDF runs them in turn, one slice each, and the pattern repeats: CPU time and virtual runtime climb at the same rate for all three. Give them different nice values in the Tasks table to make it weighted \u2014 at nice -5, 0 and 5 the weights are 3121, 1024 and 335, so task 1 gets about three slices for each one of task 2\u2019s and task 3 about a third. CPU time then fans out three ways; Virtual runtime does not, because it is runtime divided by weight.' },
+    text: 'Three equal tasks on one CPU. EEVDF runs them in turn, one slice each, and the pattern repeats: cpu time and vruntime climb at the same rate for all three. Give them different nice values in the Tasks table to make it weighted \u2014 at nice -5, 0 and 5 the weights under Scheduler read 3121, 1024 and 335, so task 1 gets about three slices for each one of task 2\u2019s and task 3 about a third. cpu time then fans out three ways; vruntime does not, because it is runtime divided by weight.' },
   realtime: { title: 'Real-time tasks', charts: ['placement', 'cputime'],
-    script: [...m_([[core(1)]]), 'create 3', 'policy * rr'],
-    text: 'Three equal tasks on one CPU, all SCHED_RR. Real-time tasks of the same priority take the CPU strictly in turn, one 100 ms timeslice each, so Placement is three long blocks instead of EEVDF\u2019s fine grain and CPU time climbs in long straight runs. Every second all three lines pause together: RT bandwidth control (sched_rt_runtime_us) gives the real-time class only 0.95 s of each second. Nice does nothing here \u2014 it is a fair-class idea; put one task back to normal and it gets only that leftover 0.05 s.' },
+    script: [...m_([[core(1)]]), 'create 3', 'policy-rt * rr 80'],
+    text: 'Three equal tasks on one CPU, all SCHED_RR. Real-time tasks of the same priority take the CPU strictly in turn, one 100 ms timeslice each, so Placement is three long blocks instead of EEVDF\u2019s fine grain and cpu time climbs in long straight runs. Every second all three lines pause together: RT bandwidth control (sched_rt_runtime_us) gives the real-time class only 0.95 s of each second. Nice does nothing here \u2014 it is a fair-class idea; put one task back to normal and it gets only that leftover 0.05 s.' },
   balance: { title: 'Load balancing', charts: ['placement', 'queues'],
     script: [...m_([[core(1), core(1)]]), 'create 4', 'affinity * 1', 'tick 10', 'affinity * 1-2'],
-    text: 'Four tasks start pinned to cpu1 while cpu2 idles; after ten ticks they may run on either CPU. In Placement all four lanes sit in cpu1’s row, sharing it; cpu2’s balancer looks for work only at its balance interval, and after a while pulls two of them across in one go. Runnable tasks shows the same moment as 4 : 0 becoming 2 : 2. Nothing moves immediately: balancing is periodic, not instant.' },
-  groups: { title: 'Cgroup fairness', charts: ['placement', 'cputime'],
+    text: 'Four tasks start pinned to cpu1 while cpu2 sits idle. After ten ticks they are free to run on either CPU, but nothing moves straight away: cpu2 only looks for work when its balance interval comes round. In Placement all four lanes stay in cpu1’s row until the balancer wakes up and pulls two of them across. Runnable tasks shows the same moment, 4 : 0 becoming 2 : 2.' },
+  groups: { title: 'Cgroup', charts: ['placement'],
     script: [...m_([[core(1)]]), 'create 4', 'cgroup-create /a', 'cgroup-create /b',
              'cgroup-attach /a 1', 'cgroup-attach /b 2', 'cgroup-attach /b 3', 'cgroup-attach /b 4'],
-    text: 'One CPU, four equal tasks: task 1 alone in cgroup /a, the other three together in /b. Fairness is applied between cgroups first, then within: task 1 gets half the CPU, the three others a sixth each. Set /b\u2019s weight to 300 in the Cgroups table and all four become equal.' },
+    text: 'One CPU, four equal tasks: task 1 alone in cgroup /a, the other three together in /b. Each cgroup owns a scheduling entity of its own, and the CPU\u2019s queue picks between those two rather than between the four tasks: /a and /b carry the same weight, so each gets half, and task 1 keeps all of /a while the other three split /b three ways. Placement shows task 1 holding the CPU half the time, and the cpu time column of the Tasks table shows the 3 : 1 : 1 : 1 that follows. Under Scheduler, CPU 1\u2019s fair queue holds just /a and /b at equal weight, and /b\u2019s own queue holds tasks 2, 3 and 4 beneath it; set /b\u2019s weight to 300 in its box under Cgroups and all four tasks become equal.' },
   little: { title: 'Big and little cores', charts: ['placement', 'util', 'queues'],
     script: [...m_([[core(1, 1024)], [core(1, 512)]]), 'create 6'],
     text: 'Six equal tasks on two CPUs, where cpu2 has half the capacity of cpu1. Wakeup placement at creation starts them 5 : 1. The balancer moves one task to the little core after a couple of hundred ticks and then stops at 4 : 2, matching the 2 : 1 capacity ratio; on two equal CPUs it would keep going to 3 : 3. Load is balanced per unit of capacity, not per task.' },
@@ -1131,7 +1290,7 @@ if (layoutCustom) {
 // a new cluster joins the last socket; a new socket starts one of its own
 $('discard-cpus').onclick = () => setCpuDraft(machine);
 if (location.hash === '#cpu-editor') $('cpu-editor').open = true;
-// the chart stack: ?charts= wins (a shared view), then the scenario's own, then CPU time. Ids the
+// the chart stack: ?charts= wins (a shared view), then the scenario's own, then cpu time. Ids the
 // catalog no longer has are dropped, so a link saved before a figure was retired still opens.
 const urlCharts = (params.get('charts') ?? '').split(',').filter((id) => FIGURES[id]);
 setCharts(urlCharts.length ? urlCharts : scenario?.charts ?? ['placement']);
@@ -1160,7 +1319,7 @@ async function boot() {
         const atBottom = con.scrollHeight - con.scrollTop - con.clientHeight < 40;
         con.append(line + '\n'); if (atBottom) con.scrollTop = con.scrollHeight;
         if (startup && line.trim()) { $('boot-preview').textContent = line; $('boot-preview').hidden = false; }
-        if (line.includes('Kernel panic')) { setStatus('Kernel panic', true); $('speed').value = 0; schedule(); }
+        if (line.includes('Kernel panic')) { setStatus('Kernel panic', true); pause(); }
       },
     });
     await cmd(null);   // the driver's ready line

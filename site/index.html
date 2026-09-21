@@ -17,6 +17,28 @@
   #tasks tfoot td { text-align: right; }
   #tasks tfoot:not(:has(#create:not([hidden]))) { display: none; }
   #tasks th:first-child, #tasks td:first-child { text-align: left; }
+  #tasks input.inert { color: GrayText; }   /* a parameter the task's class does not read */
+  /* queues: one table per CPU, the root queue's rows first and a cgroup's queue indented under
+     its entity's row, since that queue hangs off that entity. Rows are the entities the queue
+     picks between, tasks and group entities alike, in the kernel's order */
+  #queues { display: flex; flex-wrap: wrap; gap: .6rem; align-items: flex-start; margin: .3rem 0 .6rem; }
+  #queues:empty::before { content: 'no queued task'; color: GrayText; font-size: .8rem; }
+  .rq { border: 1px solid GrayText; border-radius: .35rem; padding: .35rem .45rem; width: fit-content; }
+  .rq > header { font-size: .8rem; color: GrayText; }
+  .rq table { font-size: .8rem; border-collapse: collapse; margin-top: .2rem; }
+  .rq th, .rq td { text-align: right; font-variant-numeric: tabular-nums; padding: 0 .3rem; }
+  .rq th:first-child, .rq td:first-child { text-align: left; padding-left: 0; }
+  .rq th { color: GrayText; font-weight: normal; }
+  .rq tr.ineligible td { color: GrayText; }
+  /* the marker for the task that ran: its space is reserved on every row, so the column does not
+     widen on whichever row has it this tick */
+  .rq td:first-child::after { content: '\25B6'; display: inline-block; width: .7rem; text-align: right; font-size: .55rem; visibility: hidden; }
+  .rq tr.running td:first-child::after { visibility: visible; }
+  .rq tr.next td:first-child::after { content: '\25B7'; visibility: visible; }   /* what pick_eevdf would take next */
+  .rq .path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .rq.rt > header .note { font-variant-numeric: tabular-nums; }
+  .rq.rt.throttled { border-style: dashed; }   /* the class is off the CPU until the period ends */
+  .rq.rt.throttled > header .note { color: inherit; }
   #cpu-hint { margin: 0; }
   /* scenario tabs: the page's navigation; everything below is the selected scenario */
   #scenarios { display: flex; flex-wrap: wrap; gap: 0; margin: 1.2rem 0 0; border-bottom: 1px solid GrayText; }
@@ -27,8 +49,13 @@
   #legend { margin: .3rem 0 0; font-size: .85rem; }
   #cpu-hint:empty { display: none; }
   #cpu-hint.bad { color: crimson; }
-  #clock { display: inline-flex; gap: .5rem; align-items: center; font-size: 1rem; font-weight: normal; }
-  #tick-count { color: GrayText; font-size: .85rem; font-variant-numeric: tabular-nums; }
+  /* the two buttons are one group -- what you press; the rate box is a setting, behind a rule */
+  #clock { display: inline-flex; gap: .35rem; align-items: center; font-size: 1rem; font-weight: normal; }
+  #clock label { font-size: .85rem; }                 /* the small text matches the tick count */
+  /* align-self: stretch so the rule is the row's height, not the small text's */
+  #clock .sep { align-self: stretch; margin-left: .55rem; padding-left: .9rem; display: flex; align-items: center;
+                border-left: 1px solid color-mix(in srgb, GrayText 60%, transparent); }
+  #tick-count { color: GrayText; font-size: .85rem; font-variant-numeric: tabular-nums; margin-left: .9rem; }
   #figure-picks { margin: 0 0 .7rem; display: flex; flex-direction: column; gap: .3rem; }
   .pick-row { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
   .pick-row > .pick-label { color: GrayText; font-size: .8rem; width: 4.2rem; flex: none; }
@@ -74,8 +101,10 @@
   .cg.drop > .kids > .cg { background: Canvas; }
   .task-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 1.4rem;
     padding: 0 .3rem; border-radius: .25rem; font-size: .75rem; color: #fff; font-variant-numeric: tabular-nums;
-    cursor: grab; user-select: none; }
-  .task-chip:active { cursor: grabbing; }
+    user-select: none; }
+  /* only the tree's chips drag (into another cgroup); the same chip elsewhere is a label */
+  .cg .members .task-chip { cursor: grab; }
+  .cg .members .task-chip:active { cursor: grabbing; }
   .chart-head .note { flex: 1 1 12rem; min-width: 0; }
   /* uPlot follows the page's system colours instead of its own light-mode defaults */
   .uplot .u-axis, .u-legend { color: CanvasText; }
@@ -161,19 +190,24 @@
 </details>
 
 
-<h2>Charts <span id="clock" hidden><label><input id="speed" type="number" min="0" max="1000" step="10" value="20" style="width:4.2rem" title="ticks per second; 0 stops the clock"> ticks/s</label>
-  <button id="step" title="stop the clock and advance exactly one tick">step</button><span id="tick-count"></span></span></h2>
+<h2>Charts <span id="clock" hidden><button id="play" title="stop the clock">⏸</button><button id="step" title="stop the clock and advance exactly one tick">step</button>
+  <label class="sep"><input id="speed" type="number" min="1" max="1000" step="10" value="20" style="width:4.2rem" title="ticks per second while the clock runs"> ticks/s</label>
+  <span id="tick-count"></span></span></h2>
 <div id="figure-picks"></div>
 <p class="hint" id="legend">One column per tick, newest on the right. Hover for values; wheel to pan back through the run, ctrl (or ⌘) wheel to zoom.</p>
 <div id="charts"></div>
 
-<h2>Tasks</h2>
+<h2>Workload</h2>
 <div class="table-scroll" role="region" aria-label="Tasks" tabindex="0">
-<table id="tasks"><thead><tr><th></th><th>task</th><th>state</th><th>cpu</th><th>affinity</th><th>nice</th><th>policy</th><th title="The task's share of the CPU, from its nice value: 1024 is nice 0">weight</th><th title="sum_exec_runtime: CPU time this task has actually been given, in milliseconds of real time">cpu time</th><th title="Milliseconds of virtual time, not wall clock: CPU time divided by the task's share, so a heavier task's vruntime advances more slowly for the same CPU time. Fairness is every task's vruntime advancing equally.">vruntime</th><th title="vruntime plus this task's slice scaled by its weight, in the same virtual milliseconds: the key EEVDF picks by, so the lowest eligible one runs next.">deadline</th><th title="The cgroup this task is in. To move it, drag its chip between the boxes under Cgroups.">cgroup</th><th></th></tr></thead><tbody></tbody><tfoot><tr><td colspan="13"><button id="create" hidden>create task</button></td></tr></tfoot></table>
+<table id="tasks"><thead><tr><thead><tr><thead><tr><th>task</th><th>state</th><th>cpu</th><th>affinity</th><th title="sum_exec_runtime: CPU time this task has actually been given, in milliseconds of real time">cpu time</th><th>policy</th><th title="The parameter the task's own class reads: nice for the fair classes (normal, batch), a real-time priority for fifo and rr. SCHED_IDLE ignores nice as well, so it is shown greyed out there.">nice / priority</th><th title="The fair classes' share, from nice: 1024 is nice 0, and SCHED_IDLE pins it at 3. Blank for fifo and rr, which never read it. Compared against the siblings on the task's queue, under Scheduler.">weight</th><th></th></tr></thead><tbody></tbody><tfoot><tr><td colspan="9"><button id="create" hidden>create task</button></td></tr></tfoot></table>
 </div>
 
-<h2>Cgroups</h2>
 <div id="cgroup-tree"></div>
+
+<h2>Scheduler</h2>
+<p class="hint">One scheduler, several classes: what each CPU has to pick between after the last command, one block per class with something queued. The real-time class comes first because any task on it outranks every fair one: it runs the head of its highest priority list, and its share of each second is capped. The fair queue picks the eligible entity with the earliest deadline, whether it is a task or another cgroup, whose own queue is indented under its entity, since that is where it hangs.</p>
+<div id="queues"></div>
+
 
 <section id="cpus" aria-labelledby="cpus-title">
 <h2 id="cpus-title">Machine <span id="running-cpus" class="hint"></span></h2>
@@ -181,12 +215,12 @@
 <div class="table-scroll" role="region" aria-label="CPU statistics" tabindex="0">
 <table id="cpu-stats"><thead>
 <tr><th>CPU</th>
-  <th title="Current frequency on the scale where 1024 is a full CPU, as cpufreq would move it under a running system. Sent as one cpu-freq line for every CPU, since the driver takes full state. The hardware&#x27;s own capacity is set per cluster in Layout, below.">Frequency</th>
+  <th title="Current frequency on the scale where 1024 is a full CPU, as cpufreq would move it under a running system. Sent as one cpu-freq line for the CPU changed. The hardware&#x27;s own capacity is set per cluster in Layout, below.">Frequency</th>
   <th>Task</th>
   <th title="PELT utilization of the fair class, on a scale where 1024 is a full CPU. Real-time and deadline tasks are not in it.">Utilization</th>
   <th title="Weighted demand of the fair class (PELT), not a task count. Real-time and deadline tasks are not in it.">Load avg</th>
   <th title="PELT runnable demand of the fair class; 1024 per fully runnable task. Real-time and deadline tasks are not in it.">Runnable avg</th>
-  <th title="Root fair queue virtual clock, in milliseconds of virtual time; unavailable on kernels that removed this counter">Min vruntime</th>
+  <th title="Root fair queue virtual clock, in milliseconds of virtual time; unavailable on kernels that removed this counter">min vruntime</th>
   <th title="Kernel cumulative context-switch counter">Context switches</th>
   <th title="cfs_rq h_nr_runnable: runnable tasks as the load balancer counts them, and the number it tries to even out. When the runqueue holds more than that — a real-time or deadline task, or one left queued by delayed dequeue — the raw rq->nr_running is shown after it in brackets.">Runnable</th>
   <th title="Ticks until rq->next_balance falls due; 0 means this CPU will look for work to pull at the next tick.">Next balance</th>

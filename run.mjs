@@ -30,13 +30,15 @@ console.error(`[${elapsed()}s] ready`, JSON.stringify(await cmd(null)), `(${imag
 if ('check' in args) {
   const pid = (await cmd('create')).task;
   // one command per verb the page sends; only "unknown command" counts as missing
-  const verbs = ['tick', `nice ${pid} 0`, `policy ${pid} normal`, `affinity ${pid} 1`, 'cpu-freq 1=512', `pause ${pid}`, `wake ${pid}`,
+  const verbs = ['tick', `policy-fair ${pid} normal 0`, `policy-rt ${pid} fifo 50`, `policy-fair ${pid} normal`, `affinity ${pid} 1`, 'cpu-freq 1=512', `pause ${pid}`, `wake ${pid}`,
     'cgroup-create /check', 'cgroup-weight /check 100', 'cgroup-cpus /check 1', `cgroup-attach /check ${pid}`, `kill ${pid}`];
   const missing = [];
   for (const v of verbs) if ((await cmd(v)).error === 'unknown command') missing.push(v.split(' ')[0]);
-  const cpu = shm().cpus.find(r => r.cpu === 1);
-  const fields = ['current', 'nr_running', 'capacity', 'freq', 'nr_switches', 'cfs_util_avg', 'cfs_load_avg', 'cfs_runnable_avg'];
-  const statsOk = cpu && typeof cpu.idle === 'boolean' && fields.every(k => Number.isFinite(cpu[k]) && cpu[k] >= 0);
+  const st = shm(), cpu = st.cpus.find(r => r.cpu === 1), fair = st.cfs.find(r => r.cpu === 1), rt = st.rt.find(r => r.cpu === 1);
+  const ok = (r, fields) => r && fields.every(k => Number.isFinite(r[k]) && r[k] >= 0);
+  // the runqueue's own record, then each class's queue on it (kmod/shm.h's tables)
+  const statsOk = ok(cpu, ['current', 'nr_running', 'capacity', 'freq', 'nr_switches']) && typeof cpu.idle === 'boolean'
+    && ok(fair, ['util_avg', 'load_avg', 'runnable_avg', 'h_nr_runnable']) && ok(rt, ['nr_running', 'highest_prio', 'rt_runtime']);
   // the sched domains the page shows: at least one level, with groups and the kernel's flag names
   const dom = shm().domains?.[0];
   const domOk = dom && dom.name && dom.flags && dom.groups.length >= 2 && dom.imbalance_pct > 0;
@@ -65,7 +67,8 @@ if ('check' in args) {
   }
   console.log('tasks', pids.join(' '));
   for (let c = 0; c < cpus; c++) console.log(`cpu${c + 1}`.padEnd(6), timeline.map(t => t[c] ? String(t[c]) : '.').join(''));
-  for (const s of shm().tasks) console.log(`task ${s.task}: ${s.state} cpu=${s.cpu} runtime=${(s.sum_exec_runtime / 1e6).toFixed(1)}ms vruntime=${(s.vruntime / 1e6).toFixed(1)}ms`);
+  const st = shm(), fairOf = new Map(st.entities.filter(e => e.task).map(e => [e.task, e]));   // a task's fair record, by task number
+  for (const s of st.tasks) console.log(`task ${s.task}: ${s.state} cpu=${s.cpu} runtime=${(s.sum_exec_runtime / 1e6).toFixed(1)}ms vruntime=${((fairOf.get(s.task)?.vruntime ?? 0) / 1e6).toFixed(1)}ms`);
   await cmd('exit');
 }
 console.error(`[${elapsed()}s] done`);

@@ -42,12 +42,16 @@ export function qemuArgs({ smp, mem, params = {} }) {
 }
 
 // kmod/shm.h, byte for byte: little-endian, u32/u64 fields, natural alignment.
-// The region describes itself (kmod/shm.h): the header carries where each table starts, how wide
-// its records are and how many fit, so nothing here hardcodes a stride or an offset. Only magic,
-// layout and gen sit at fixed places. LAYOUT is bumped by the kmod when a record's fields change
-// meaning without changing its size -- everything that resizes is already caught by the strides.
-const MAGIC = 0x5054536b, LAYOUT = 2;
-const HDR_SIZE = 96;       // the header itself; a change here bumps LAYOUT
+// The region describes itself: the header carries one descriptor per table (count, capacity,
+// offset, stride), so nothing here hardcodes where a table is or how wide its records are. Only
+// magic, layout and gen sit at fixed places. LAYOUT is bumped by the kmod when a record's fields
+// change meaning without changing its size -- everything that resizes is already caught by the
+// strides.
+const MAGIC = 0x5054536b, LAYOUT = 6;
+const HDR_SIZE = 160;      // the header itself; a change here bumps LAYOUT
+// kmod/shm.h's enum kstep_shm_tables, in order: the machine and the tasks, then a queue table and
+// a member table per scheduling class
+const TABLES = ['cpus', 'tasks', 'groups', 'domains', 'cfs', 'entities', 'rt', 'rt_entities'];
 const SHM_MAX = 1 << 20;   // a sanity bound on what the header may claim, before we map it
 const TASK_STATES = ['running', 'runnable', 'sleeping', 'blocked'];
 const POLICIES = { 0: 'normal', 1: 'fifo', 2: 'rr', 3: 'batch', 5: 'idle' };   // the kernel's SCHED_* numbers
@@ -59,13 +63,10 @@ function shmLayout(view) {
   const magic = u32(0), layout = u32(4);
   if (magic !== MAGIC) throw new Error(`not a kSTEP shared region (magic ${magic.toString(16)})`);
   if (layout !== LAYOUT) throw new Error(`shm layout ${layout}, this page speaks ${LAYOUT}: rebuild the image from the current kmod`);
-  const L = {
-    cpuOff: u32(32), cpuStride: u32(36), taskOff: u32(40), taskStride: u32(44),
-    cgroupOff: u32(48), cgroupStride: u32(52), domainOff: u32(56), domainStride: u32(60),
-    maxCpus: u32(64), maxTasks: u32(68), maxCgroups: u32(72), maxDomains: u32(76),
-    maxGroups: u32(80), groupStride: u32(84),
-  };
-  L.size = L.domainOff + L.maxDomains * L.domainStride;
+  const L = { tables: {} };
+  TABLES.forEach((name, i) => { const o = 16 + i * 16; L.tables[name] = { countAt: o, max: u32(o + 4), off: u32(o + 8), stride: u32(o + 12) }; });
+  L.maxGroups = u32(16 + TABLES.length * 16); L.groupStride = u32(20 + TABLES.length * 16);
+  L.size = Math.max(...Object.values(L.tables).map(t => t.off + t.max * t.stride));
   if (!(L.size > 0 && L.size <= SHM_MAX)) throw new Error(`shm header claims ${L.size} bytes`);
   return L;
 }
@@ -73,31 +74,52 @@ function decodeShm(view, bytes, L) {
   for (;;) {
     const gen = view.getUint32(8, true);
     if (gen & 1) continue;   // the writer is mid-update
-    const ncpus = view.getUint32(16, true), ntasks = view.getUint32(20, true), ngroups = view.getUint32(24, true);
-    const ndomains = view.getUint32(28, true);
-    if (ncpus > L.maxCpus || ntasks > L.maxTasks || ngroups > L.maxCgroups || ndomains > L.maxDomains) continue;   // mid-update
     const u32 = (o) => view.getUint32(o, true), u64 = (o) => Number(view.getBigUint64(o, true));
-    const cpus = Array.from({ length: ncpus }, (_, i) => { const o = L.cpuOff + i * L.cpuStride; return {
-      cpu: u32(o), current: u32(o + 4), idle: !!u32(o + 8), capacity: u32(o + 12), freq: u32(o + 16), nr_running: u64(o + 24), nr_switches: u64(o + 32),
-      min_vruntime: u64(o + 40), cfs_util_avg: u64(o + 48), cfs_load_avg: u64(o + 56), cfs_runnable_avg: u64(o + 64),
-      // what the balancer reads, as against what the runqueue holds
-      h_nr_runnable: u64(o + 72), next_balance_in: u32(o + 80) }; });
-    const tasks = Array.from({ length: ntasks }, (_, i) => { const o = L.taskOff + i * L.taskStride; const flags = u32(o + 20); return {
+    // one table: its records as `decode` reads them, at the stride the kmod declared
+    const table = (name, decode) => { const t = L.tables[name], n = u32(t.countAt);
+      if (n > t.max) return null;   // mid-update
+      return Array.from({ length: n }, (_, i) => decode(t.off + i * t.stride)); };
+    // struct kstep_shm_se, the block a task record and a group-entity record share. The flags are
+    // the kernel's answers (kmod/shm.h): the page draws them and derives nothing.
+    const se = (o) => { const flags = u32(o); return { eligible: !!(flags & 1), delayed: !!(flags & 2), on_rq: !!(flags & 4), curr: !!(flags & 8), pick: !!(flags & 16),
+      share: u32(o + 4) / 1024, weight: u64(o + 8), sum_exec_runtime: u64(o + 16), vruntime: u64(o + 24), deadline: u64(o + 32), slice: u64(o + 40), lag: Number(view.getBigInt64(o + 48, true)) }; };
+    // the runqueue itself: nothing here belongs to one class; each class's queue on the CPU is a
+    // record in that class's table, joined by cpu
+    const cpus = table('cpus', (o) => ({
+      cpu: u32(o), current: u32(o + 4), idle: !!u32(o + 8), capacity: u32(o + 12), freq: u32(o + 16), next_balance_in: u32(o + 20),
+      nr_running: u64(o + 24), nr_switches: u64(o + 32) }));
+    // the cgroups the kernel holds, the root ("/") first, in tree order: their configuration.
+    // Decoded before the tasks and entities, which name their cgroup by its row here.
+    const groups = table('groups', (o) => ({ path: cstr(bytes, o, 40), cpus: u64(o + 40), weight: u32(o + 48) }));
+    const groupPath = (i) => groups?.[i]?.path ?? '/';
+    // a task's identity and attributes; what its class makes of it is that class's record with
+    // this task number (entities for the fair classes, rt_entities for fifo and rr)
+    const tasks = table('tasks', (o) => ({
       task: u32(o), state: TASK_STATES[u32(o + 4)], cpu: u32(o + 8), policy: POLICIES[u32(o + 12)] ?? '?', nice: view.getInt32(o + 16, true),
-      eligible: !!(flags & 1), delayed: !!(flags & 2), cpus: u64(o + 24), weight: u64(o + 32), sum_exec_runtime: u64(o + 40), vruntime: u64(o + 48),
-      deadline: u64(o + 56), slice: u64(o + 64), cgroup: cstr(bytes, o + 72, 32) }; });
-    // the cgroups the kernel holds, the root ("/") first, in tree order
-    const groups = Array.from({ length: ngroups }, (_, i) => { const o = L.cgroupOff + i * L.cgroupStride; return {
-      path: cstr(bytes, o, 40), cpus: u64(o + 40), weight: u32(o + 48) }; });
+      rt_priority: u32(o + 20), cgroup: groupPath(u32(o + 24)), cpus: u64(o + 32), sum_exec_runtime: u64(o + 40) }));
+    // the fair class: its root queue on each CPU, and every entity on the class -- a task's
+    // (task > 0) or a cgroup's group entity on one CPU (task 0), which is what the parent queue
+    // actually picks between and no task record shows. The kernel keeps no per-cgroup total, so
+    // neither does this.
+    const cfs = table('cfs', (o) => ({ cpu: u32(o), min_vruntime: u64(o + 8), util_avg: u64(o + 16), load_avg: u64(o + 24), runnable_avg: u64(o + 32),
+      h_nr_runnable: u64(o + 40) }));   // what the balancer reads, as against what the runqueue holds
+    const entities = table('entities', (o) => ({ task: u32(o), cgroup: groupPath(u32(o + 4)), cpu: u32(o + 8), ...se(o + 16) }));
+    // the real-time class: its queue on each CPU, and the tasks on it. Flags are the kernel's
+    // answers (kmod/shm.h): the head of the highest list is the pick, none while throttled.
+    const rt = table('rt', (o) => ({ cpu: u32(o), nr_running: u32(o + 4), highest_prio: u32(o + 8), throttled: !!u32(o + 12),
+      rt_time: u64(o + 16), rt_runtime: u64(o + 24) }));
+    const rt_entities = table('rt_entities', (o) => { const flags = u32(o + 8); return { task: u32(o), cpu: u32(o + 4),
+      on_rq: !!(flags & 1), curr: !!(flags & 2), pick: !!(flags & 4), position: u32(o + 12), time_slice: u32(o + 16) }; });
     // the sched domains the kernel built, per CPU and innermost first -- not the topology asked for
-    const domains = Array.from({ length: ndomains }, (_, i) => { const o = L.domainOff + i * L.domainStride; const n = u32(o + 4); return {
+    const domains = table('domains', (o) => { const n = u32(o + 4); return {
       cpu: u32(o), span: u64(o + 8), name: cstr(bytes, o + 16, 8), flags: cstr(bytes, o + 24, 160),
       imbalance_pct: u32(o + 184), balance_interval: u32(o + 188),
       busy_factor: u32(o + 192), cache_nice_tries: u32(o + 196),
       nr_balance_failed: u32(o + 200), last_balance_ago: u32(o + 204),
       groups: Array.from({ length: Math.min(n, L.maxGroups) }, (_, j) => { const g = o + 208 + j * L.groupStride; return {
         span: u64(g), capacity: u32(g + 8), min_capacity: u32(g + 12), max_capacity: u32(g + 16), weight: u32(g + 20) }; }) }; });
-    if (view.getUint32(8, true) === gen) return { timestamp: view.getUint32(12, true), cpus, tasks, groups, domains };
+    if (!cpus || !groups || !tasks || !domains || !cfs || !entities || !rt || !rt_entities) continue;   // a count ran past its table: mid-update
+    if (view.getUint32(8, true) === gen) return { timestamp: view.getUint32(12, true), cpus, tasks, groups, domains, cfs, entities, rt, rt_entities };
   }
 }
 

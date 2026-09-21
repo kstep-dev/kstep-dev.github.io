@@ -129,11 +129,23 @@ check('plain wheel pans without throwing', true);
 
 // a link saved before a figure was retired must still open
 await load('?charts=placement,cputime');
-check('a saved view opens', shown().join(',') === 'Placement,CPU time', shown().join(','));
+check('a saved view opens', shown().join(',') === 'Placement,cpu time', shown().join(','));
 await load('?charts=nosuchfigure');
 check('an unknown figure is dropped, leaving the default set', shown().join(',') === 'Placement', shown().join(','));
 await load('?scenario=fair');
 check('a scenario brings its figures', shown().length > 1, shown().join(', '));
+
+// the clock: play/pause is a state of its own, and step always stops the clock
+await load('');
+const play = els.get('play'), speed = els.get('speed');
+check('the clock starts running', play.textContent === '\u23f8');
+const rate = speed.value;
+play.onclick();
+check('pause flips the button and keeps the rate', play.textContent === '\u25b6' && speed.value === rate);
+play.onclick();
+check('play flips it back', play.textContent === '\u23f8');
+els.get('step').onclick();
+check('step stops the clock while it runs', play.textContent === '\u25b6');
 
 console.log(failures ? `\n${failures} failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);
