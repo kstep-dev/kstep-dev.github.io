@@ -4,28 +4,44 @@
 //   ./run.mjs [--build v6.18 | --image DIR] [--smp 3] [--mem 64] [--tasks 3] [--ticks 30]  # round-robin demo: who ran where
 //   ./run.mjs --bench [10]         # per-command latency: `tick`s, then `top`s, N seconds each
 //   ./run.mjs --check              # deploy gate: the staged image (site/images/cli) answers every verb the page uses
+//   ./run.mjs --snapshot --image site/images/cli [--smp 5]   # write snap-<smp>.bin.gz + .json there: the machine at the ready line
 //
 // Boots build/<build>/{kernel,rootfs.cpio} from the kSTEP checkout (KSTEP_DIR, default ..) in
 // site/qemu/'s QEMU, the way site/kstep.mjs does for the page. Console -> stderr with --verbose.
+// An image dir with a snapshot for the smp (kstep viz writes one for the page's default machine,
+// 4 CPUs + the driver's) is resumed from it, ~0.3 s instead of ~4 s, unless --cold.
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runKstep } from './site/kstep.mjs';
+import { image as stagedFiles, runKstep } from './site/kstep.mjs';
 
 const W = path.dirname(fileURLToPath(import.meta.url));
 const args = Object.fromEntries(process.argv.slice(2).map((a, i, all) => a.startsWith('--') ? [a.slice(2), all[i + 1]?.startsWith('--') ? '' : all[i + 1] ?? ''] : []).filter(x => x.length));
 const kstep = process.env.KSTEP_DIR ?? path.join(W, '..');
 const image = args.image ?? ('check' in args ? path.join(W, 'site', 'images', 'cli') : path.join(kstep, 'build', args.build ?? 'v6.18'));
-const smp = Number(args.smp ?? 3), mem = Number(args.mem ?? 64), cpus = smp - 1;
+const smp = Number(args.smp ?? ('snapshot' in args ? 5 : 3)), mem = Number(args.mem ?? 64), cpus = smp - 1;
 const t0 = Date.now(), elapsed = () => ((Date.now() - t0) / 1000).toFixed(1);
 
 const Module = (await import(path.join(W, 'site', 'qemu', 'qemu-system-aarch64.js'))).default;
-const { cmd, shm } = await runKstep(Module, {
-  files: { kernel: fs.readFileSync(path.join(image, 'kernel')), rootfs: fs.readFileSync(path.join(image, 'rootfs.cpio')) },
-  smp, mem,
-  onConsole: (line) => { if ('verbose' in args) process.stderr.write(line + '\n'); },
-});
-console.error(`[${elapsed()}s] ready`, JSON.stringify(await cmd(null)), `(${image}, smp=${smp}, mem=${mem}M)`);
+// a file of the image dir, null when absent; --cold and --snapshot boot the kernel, not a snapshot
+const cold = 'snapshot' in args || 'cold' in args;
+const get = async (name) => { const f = path.join(image, name); return fs.existsSync(f) && !(cold && name.startsWith('snap-')) ? fs.readFileSync(f) : null; };
+const console_ = [];   // the boot's console, saved with a snapshot so a resume can still show it
+const boot = async (n) => { const files = await stagedFiles(n, get); return { resumed: !!files.snapshot, ...await runKstep(Module, { files, smp: n, mem, onConsole: (line) => { console_.push(line); if ('verbose' in args) process.stderr.write(line + '\n'); } }) }; };
+const { cmd, shm, snapshot, resumed } = await boot(smp);
+const ready = await cmd(null);
+console.error(`[${elapsed()}s] ${resumed ? 'resumed' : 'ready'}`, JSON.stringify(ready), `(${image}, smp=${smp}, mem=${mem}M)`);
+
+if ('snapshot' in args) {
+  // the stream fits this QEMU build, smp and mem only, so it is staged next to the image it was
+  // taken from and regenerated with it; the ready line goes with it (the page hands it to cmd(null))
+  const stream = await snapshot(), snap = path.join(image, `snap-${smp}.bin.gz`);
+  fs.writeFileSync(snap, zlib.gzipSync(stream, { level: 9 }));
+  fs.writeFileSync(path.join(image, `snap-${smp}.json`), JSON.stringify({ smp, mem, ready, console: console_ }) + '\n');
+  console.error(`[${elapsed()}s] ${snap}: ${stream.length} B, ${fs.statSync(snap).size} B gzip'd`);
+  process.exit(0);
+}
 
 if ('check' in args) {
   const pid = (await cmd('create')).task;
@@ -43,6 +59,16 @@ if ('check' in args) {
   const dom = shm().domains?.[0];
   const domOk = dom && dom.name && dom.flags && dom.groups.length >= 2 && dom.imbalance_pct > 0;
   await cmd('exit');
+  // the page's default machine resumes from a snapshot: it must answer too, with the same driver
+  if (fs.existsSync(path.join(image, 'snap-5.json'))) {
+    const vm = await boot(5);
+    if (!vm.resumed) { console.error('snapshot not used'); process.exit(1); }
+    const stale = new Promise((_, rej) => setTimeout(() => rej(new Error('snapshot answered nothing in 20 s: restage it (kstep viz) after a QEMU or image rebuild')), 20000));
+    await Promise.race([vm.cmd(null).then(() => vm.cmd('tick')), stale]);
+    if (!vm.shm().cpus.find(r => r.cpu === 1)) { console.error('snapshot resumed without CPU records'); process.exit(1); }
+    await vm.cmd('exit');
+    console.log('snapshot (smp=5): resumed and answered');
+  }
   if (!statsOk) { console.error('playground image lacks valid CPU/runqueue snapshots; rebuild it from the current kmod'); process.exit(1); }
   if (!domOk) { console.error('playground image reports no sched domains; rebuild it from the current kmod'); process.exit(1); }
   if (missing.length) { console.error(`playground image lacks: ${missing.join(', ')}`); process.exit(1); }

@@ -37,7 +37,7 @@ function renderBugs() {
     const pl = tr.insertCell(); if (b.plot) { const img = document.createElement('img'); img.src = b.plot; img.alt = `${b.name}: buggy vs fixed`; img.loading = 'lazy'; img.onerror = () => img.remove(); pl.append(img); }
   }
 }
-const { runKstep } = await import(`./kstep.mjs?v=${V}`);
+const { image, runKstep } = await import(`./kstep.mjs?v=${V}`);
 
 // ---- session state ----
 const tasks = [];            // [{id, stat, alive}] in creation order; the driver names tasks 1, 2, .. by creation
@@ -782,7 +782,7 @@ const scriptWith = (script, m) => [...cpuSetup(m), ...script.filter(l => !MACHIN
 
 // ---- task table: rows are created once and updated in place (no rebuild, no flicker) ----
 const rowOf = new Map();
-const STATE = 1, CPU = 2, AFF = 3, TIME = 4, POL = 5, NICE = 6, WEIGHT = 7, ACT = 8, NCOLS = 9;   // where the task is and what it got, then its class, parameter and the weight that follows
+const CG = 1, STATE = 2, CPU = 3, AFF = 4, TIME = 5, POL = 6, NICE = 7, WEIGHT = 8, ACT = 9, NCOLS = 10;   // where the task is and what it got, then its class, parameter and the weight that follows
 const AFF_TITLE = 'CPUs the task may run on';
 // A row's controls are inputs and views at once: the user types into them, but the same
 // settings get changed behind their back -- a scenario's setup script sends driver lines
@@ -863,15 +863,14 @@ function renderTask(t) {
     for (let i = 0; i < NCOLS; i++) tr.insertCell();   // one per <th>; vruntime and deadline are queue-local, so they live under Scheduler
     tr.cells[ACT].style.whiteSpace = 'nowrap';
     // the task's number in its figure colour, the same chip as under Scheduler, so a task is one
-    // mark wherever it appears. The row sits under its cgroup's row; dragging the chip onto
-    // another cgroup's row (or one of its tasks) moves the task there.
-    const chip = document.createElement('span'); chip.className = 'task-chip';
-    chip.style.background = colorOf(t.id); chip.textContent = t.id;
-    chip.title = `task ${t.id} \u2014 drag onto a cgroup to move it there`;
-    chip.draggable = true;
-    chip.ondragstart = (e) => { e.dataTransfer.setData(TASK_DRAG, String(t.id)); e.dataTransfer.effectAllowed = 'move'; };
-    tr.cells[0].append(chip);
-    dropTarget(tr, () => t.stat?.cgroup ?? '/');
+    // mark wherever it appears. The row sits under its cgroup's row.
+    tr.cells[0].append(chip(t));
+    // The cgroup is a property of the task like its policy, so it is a control in the row: a select
+    // over the tree's paths, the kernel's value flowing back in like the others. Its options are the
+    // tree's and are rebuilt by renderGroups as the tree changes.
+    const cg = document.createElement('select'); cg.className = 'cgroup'; cg.title = 'the task\u2019s cgroup; pick another to move it there';
+    onSet(cg, 'cgroup-attach', ` ${t.id}`);
+    tr.cells[CG].append(cg);
     // The scheduling parameter, which is not one control but whichever one the task's policy
     // reads: nice for the fair classes, a real-time priority for fifo and rr. One cell holds both
     // and shows the one that is in force, so a task's row never offers a knob its class ignores.
@@ -911,6 +910,7 @@ function renderTask(t) {
     tr.cells[ACT].append(pause, ' ', kill);
   }
   const s = t.stat ?? {};
+  sync(tr.cells[CG].firstElementChild, s.cgroup);
   sync(tr.cells[NICE].firstElementChild, s.nice);
   if (s.rt_priority) sync(tr.cells[NICE].lastElementChild, s.rt_priority);   // 0 under a fair policy: keep the last real value
   sync(tr.cells[POL].firstElementChild, s.policy);
@@ -939,31 +939,6 @@ const delGroup = (path) => cmd(`cgroup-destroy ${path}`);
 const groupPaths = () => ['/', ...[...groups.keys()].sort()];
 const groupRowOf = new Map();   // path -> its row, made once and kept, like the task rows, so a value being typed is not rebuilt away
 
-// A cgroup is where its tasks are, so moving a task is dragging its chip onto the cgroup's row, or
-// onto any row already in that cgroup. The cgroup's row is the one highlighted, whichever row is
-// under the pointer; it is cleared on leaving the table as well as on the drop, since dragging out
-// of the page never fires a drop.
-const TASK_DRAG = 'application/x-kstep-task';
-let dropRow = null;
-const clearDrop = () => { dropRow?.classList.remove('drop'); dropRow = null; };
-function dropTarget(tr, pathOf) {
-  tr.ondragover = (e) => {
-    if (!e.dataTransfer.types.includes(TASK_DRAG)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    const g = groupRowOf.get(pathOf());
-    if (dropRow !== g) { clearDrop(); dropRow = g; g?.classList.add('drop'); }
-  };
-  tr.ondrop = (e) => {
-    const id = e.dataTransfer.getData(TASK_DRAG);
-    if (!id) return;
-    e.preventDefault();
-    clearDrop();
-    enqueue(() => cmd(`cgroup-attach ${pathOf()} ${id}`));
-  };
-}
-$('tasks').addEventListener('dragleave', (e) => { if (!e.relatedTarget) clearDrop(); });
-$('tasks').addEventListener('dragend', clearDrop);
 
 // A disabled button does not take mouse events, and with them goes its tooltip -- which is the
 // one moment the explanation is wanted. The wrapper is not disabled, so it still answers a hover.
@@ -1002,7 +977,6 @@ function groupRow(path) {
     tr.delBtn.className = 'rm';
     actCell.append(' ', tr.delWrap);
   }
-  dropTarget(tr, () => path);
   return tr;
 }
 
@@ -1043,6 +1017,24 @@ function renderGroups() {
     for (const k of kids) walk(k, depth + 1);
   };
   walk('/', 0);
+  // Every task row's cgroup select offers the same tree. cgroup v2 keeps tasks and controlled
+  // children apart, so a cgroup with children is offered greyed out with the reason, rather than
+  // letting the kernel refuse afterwards. Rebuilt only when the tree changes, so an open select
+  // is not pulled from under the pointer.
+  const key = paths.join('\n');
+  for (const t of tasks) {
+    const sel = rowOf.get(t.id)?.cells[CG].firstElementChild;
+    if (!sel) continue;
+    if (sel.dataset.tree !== key) {
+      sel.dataset.tree = key;
+      sel.replaceChildren(...paths.map((p) => {
+        const o = new Option(p, p);
+        if (p !== '/' && paths.some((k) => parentOf(k) === p)) { o.disabled = true; o.title = `${p} has child cgroups, so it cannot hold tasks`; }
+        return o;
+      }));
+    }
+    sync(sel, t.stat?.cgroup);
+  }
   // Rows into that order with the fewest moves: a moved row drops its focus, so a row already
   // in place is left alone.
   order.forEach((tr, i) => { if (tb.rows[i] !== tr) tb.insertBefore(tr, tb.rows[i] ?? null); });
@@ -1295,23 +1287,23 @@ $('boot').onclick = () => {
 async function boot() {
   try {
     setStatus('Downloading kernel…', false, true);
-    const get = (u) => fetch(u).then(r => { if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`); return r.arrayBuffer(); });
-    const [kernel, rootfs, { default: Module }] = await Promise.all([
-      get(`images/cli/kernel?v=${V}`), get(`images/cli/rootfs.cpio?v=${V}`),   // ?v busts the browser cache after a restage
-      import(`./qemu/qemu-system-aarch64.js?v=${V}`),
-    ]);
-    setStatus('Booting kernel…', false, true);
-    vm = await runKstep(Module, {
-      files: { kernel, rootfs },
-      smp: ncpus + 1, mem: 64,
-      locateFile: (f) => `qemu/${f}?v=${V}`,
-      onConsole: (line) => {
-        const atBottom = con.scrollHeight - con.scrollTop - con.clientHeight < 40;
-        con.append(line + '\n'); if (atBottom) con.scrollTop = con.scrollHeight;
-        if (startup && line.trim()) { $('boot-preview').textContent = line; $('boot-preview').hidden = false; }
-        if (line.includes('Kernel panic')) { setStatus('Kernel panic', true); pause(); }
-      },
-    });
+    // ?v busts the browser cache after a restage; a 404 is "not staged" (the snapshot exists for
+    // the default CPU count only, and resuming it skips the ~4 s boot: other machines boot cold)
+    const get = (name) => fetch(`images/cli/${name}?v=${V}`).then(r => r.ok ? r.arrayBuffer() : r.status === 404 ? null : Promise.reject(new Error(`${name}: HTTP ${r.status}`)));
+    const smp = ncpus + 1;
+    const [files, { default: Module }] = await Promise.all([image(smp, get), import(`./qemu/qemu-system-aarch64.js?v=${V}`)]);
+    setStatus(files.snapshot ? 'Resuming kernel…' : 'Booting kernel…', false, true);
+    const onConsole = (line) => {
+      const atBottom = con.scrollHeight - con.scrollTop - con.clientHeight < 40;
+      con.append(line + '\n'); if (con.childNodes.length > LOG_MAX) con.firstChild.remove();
+      if (atBottom) con.scrollTop = con.scrollHeight;
+      if (startup && line.trim()) { $('boot-preview').textContent = line; $('boot-preview').hidden = false; }
+      if (line.includes('Kernel panic')) { setStatus('Kernel panic', true); pause(); }
+    };
+    // a resumed machine printed its boot log when the snapshot was taken: show that boot's
+    for (const line of files.console ?? []) onConsole(line);
+    if (files.snapshot) onConsole('[resumed from a snapshot of this boot, taken at the ready line]');
+    vm = await runKstep(Module, { files, smp, mem: 64, locateFile: (f) => `qemu/${f}?v=${V}`, onConsole });
     await cmd(null);   // the driver's ready line
     setStatus('Running setup…', false, true);
     // The script, as driver lines, except the page's two conveniences: `tick N` advances the

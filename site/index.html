@@ -78,14 +78,10 @@
   #tasks tr.group button { padding: 0 .35rem; font-size: .7rem; line-height: 1.5; }
   #tasks tr.group td:last-child > span { display: inline-flex; }
   #tasks td:first-child { padding-left: calc(.2rem + var(--depth, 0) * 1.2rem); }
-  /* the cgroup you would drop into, named while the drag is on rather than after it lands */
-  #tasks tr.drop td { background: color-mix(in srgb, AccentColor 12%, Canvas); }
   .task-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 1.4rem;
     padding: 0 .3rem; border-radius: .25rem; font-size: .75rem; color: #fff; font-variant-numeric: tabular-nums;
     user-select: none; }
-  /* only the workload's chips drag (into another cgroup); the same chip elsewhere is a label */
-  #tasks .task-chip { cursor: grab; }
-  #tasks .task-chip:active { cursor: grabbing; }
+  #tasks td select.cgroup { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }
   .chart-head .note { flex: 1 1 12rem; min-width: 0; }
   /* uPlot follows the page's system colours instead of its own light-mode defaults */
   .uplot .u-axis, .u-legend { color: CanvasText; }
@@ -180,7 +176,7 @@
 
 <h2>Workload</h2>
 <div class="table-scroll" role="region" aria-label="Tasks" tabindex="0">
-<table id="tasks"><thead><tr><th>task</th><th>state</th><th>cpu</th><th title="A task's allowed CPUs; a cgroup's cpuset.cpus">affinity</th><th title="sum_exec_runtime: CPU time this task has actually been given, in milliseconds of real time">cpu time</th><th>policy</th><th title="The parameter the task's own class reads: nice for the fair classes (normal, batch), a real-time priority for fifo and rr. SCHED_IDLE ignores nice as well, so it is shown greyed out there.">nice / priority</th><th title="The fair classes' share, from nice: 1024 is nice 0, and SCHED_IDLE pins it at 3. Blank for fifo and rr, which never read it. A cgroup's row shows its cpu.weight, whose 100 is a task's 1024, against its sibling cgroups and the tasks beside it. Compared against the siblings on the queue, under Scheduler.">weight</th><th></th></tr></thead><tbody></tbody><tfoot><tr><td colspan="9"><button id="create" hidden>create task</button></td></tr></tfoot></table>
+<table id="tasks"><thead><tr><th>task</th><th title="The cgroup the task is in. Pick another to move it there; a cgroup with child cgroups cannot take tasks (cgroup v2 keeps tasks and controlled children apart), so it is greyed out.">cgroup</th><th>state</th><th>cpu</th><th title="A task's allowed CPUs; a cgroup's cpuset.cpus">affinity</th><th title="sum_exec_runtime: CPU time this task has actually been given, in milliseconds of real time">cpu time</th><th>policy</th><th title="The parameter the task's own class reads: nice for the fair classes (normal, batch), a real-time priority for fifo and rr. SCHED_IDLE ignores nice as well, so it is shown greyed out there.">nice / priority</th><th title="The fair classes' share, from nice: 1024 is nice 0, and SCHED_IDLE pins it at 3. Blank for fifo and rr, which never read it. A cgroup's row shows its cpu.weight, whose 100 is a task's 1024, against its sibling cgroups and the tasks beside it. Compared against the siblings on the queue, under Scheduler.">weight</th><th></th></tr></thead><tbody></tbody><tfoot><tr><td colspan="10"><button id="create" hidden>create task</button></td></tr></tfoot></table>
 </div>
 
 

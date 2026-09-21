@@ -86,6 +86,14 @@ EOT
 qemu() {
   toolchain
   export CFLAGS="-O3 -pthread -DWASM_BIGINT" CXXFLAGS="-O3 -pthread -DWASM_BIGINT" LDFLAGS="-sWASM_BIGINT -sASYNCIFY=1 -L$TARGET/lib"
+  # Emscripten's proxied poll() arms a setTimeout for the poll's timeout and never cancels it
+  # when the poll completes early, so every poll QEMU's main loop makes (several per command)
+  # leaves a pending timer and its closures behind for the length of the timeout: ~60 KB per
+  # tick of JS heap, 1.6 GB after 90 s of ticks. Cancel the timer on completion (emsdk 4.0.23).
+  lib="$W/build/emsdk/upstream/emscripten/src/lib/libsyscall.js"
+  if ! grep -q pollTimer "$lib"; then
+    sed -i 's/^    var notifyDone = false;$/    var notifyDone = false;\n    var pollTimer;/; s/^      notifyDone = true;$/      notifyDone = true;\n      clearTimeout(pollTimer);/; s/^        setTimeout(() => {$/        pollTimer = setTimeout(() => {/' "$lib"
+  fi
   src="$W/build/qemu"
   if [ ! -d "$src" ]; then
     git init -q "$src" && git -C "$src" fetch -q --depth 1 "$QEMU_REPO" "$QEMU_COMMIT" && git -C "$src" checkout -q FETCH_HEAD
@@ -96,8 +104,17 @@ qemu() {
   sed -i 's/-sTOTAL_MEMORY=2GB/-sTOTAL_MEMORY=1GB/' "$src/configs/meson/emscripten.txt"
   # The JIT compiles a translation block to wasm after it has run INSTANTIATE_NUM times in the
   # interpreter (1500 upstream). kSTEP runs are short, so most time goes to interpreting boot
-  # code: 300 cut a run from 7.2 s to 6.0 s here (50: 5.6 s, but many more wasm modules).
+  # code: 300 cut a run from 7.2 s to 6.0 s here (50: 5.6 s, but many more wasm modules). On the
+  # arm64 build 50 and 300 boot alike (3.8-4.7 s, within the noise), and the page resumes from a
+  # snapshot anyway, so 300 stays.
   sed -i 's/^#define INSTANTIATE_NUM .*/#define INSTANTIATE_NUM 300/' "$src/tcg/wasm64.c"
+  # The virt board always creates 32 virtio-mmio transports; the kernel probes each (~0.4 s of a
+  # 4 s boot under wasm). kSTEP puts its one virtio-serial device on the first; a few spare.
+  sed -i 's/^#define NUM_VIRTIO_TRANSPORTS .*/#define NUM_VIRTIO_TRANSPORTS 4/' "$src/include/hw/arm/virt.h"
+  # The virt machine puts 32 virtio-mmio transports in its device tree (a compile-time constant);
+  # the kernel probes every one, ~0.4 s of the boot under wasm. kSTEP plugs in one
+  # virtio-serial-device, so 4 (mmio slots are also what -device without a bus= picks from).
+  sed -i 's/^#define NUM_VIRTIO_TRANSPORTS .*/#define NUM_VIRTIO_TRANSPORTS 4/' "$src/include/hw/arm/virt.h"
   # Only the virt machine and the virtio console, not the ~360 devices of the default arm64
   # build: --without-default-devices drops everything the machine does not select. virt's ACPI
   # code links against hw/cxl, which upstream only enables by default, so name it explicitly,
