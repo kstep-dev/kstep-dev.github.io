@@ -968,7 +968,7 @@ function renderTask(t) {
   sync(tr.cells[AFF].firstElementChild, s.cpus);
   if (s.state !== undefined) tr.cells[ACT].firstElementChild.textContent = s.state === 'running' || s.state === 'runnable' ? 'pause' : 'wake';
   // weight is a fair-class number, read off the task's fair record; the real-time classes never have one
-  [[STATE, s.state ?? ''], [CPU, s.cpu], [TIME, ms(s.sum_exec_runtime)]]
+  [[STATE, s.state ?? ''], [CPU, s.cpu], [TIME, s.sum_exec_runtime === undefined ? undefined : Math.round(s.sum_exec_runtime / 1e6)]]   // whole ms: the tick is the unit of CPU time here
     .forEach(([i, v]) => { if (v === undefined) return; const text = String(v); if (tr.cells[i].textContent !== text) tr.cells[i].textContent = text; });
 }
 
@@ -1318,8 +1318,7 @@ async function step() {
 // A task is created in a cgroup (the driver moves it before its first wakeup, so the scheduler
 // first sees it there); the root needs no path.
 async function create(path = '/') {
-  const r = await cmd(path === '/' ? 'create' : `create ${path}`);
-  if (!r.error) tasks.push({ id: r.task, alive: true });
+  await cmd(path === '/' ? 'create' : `create ${path}`);   // the new task arrives with the region's state, which cmd() adopts
 }
 // UI actions run one after another on a queue; buttons stay enabled, nothing is dropped.
 let queue = Promise.resolve();
