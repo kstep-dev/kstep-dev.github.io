@@ -138,14 +138,14 @@ check('a scenario brings its figures', shown().length > 1, shown().join(', '));
 // the clock: play/pause is a state of its own, and step always stops the clock
 await load('');
 const play = els.get('play'), speed = els.get('speed');
-check('the clock starts running', play.textContent === '\u23f8');
+check('the clock starts running', play.textContent === 'pause');
 const rate = speed.value;
 play.onclick();
-check('pause flips the button and keeps the rate', play.textContent === '\u25b6' && speed.value === rate);
+check('pause flips the button and keeps the rate', play.textContent === 'play' && speed.value === rate);
 play.onclick();
-check('play flips it back', play.textContent === '\u23f8');
+check('play flips it back', play.textContent === 'pause');
 els.get('step').onclick();
-check('step stops the clock while it runs', play.textContent === '\u25b6');
+check('step stops the clock while it runs', play.textContent === 'play');
 
 console.log(failures ? `\n${failures} failed` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

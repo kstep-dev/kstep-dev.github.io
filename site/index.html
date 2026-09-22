@@ -48,13 +48,21 @@
   #legend { margin: .3rem 0 0; font-size: .85rem; }
   #cpu-hint:empty { display: none; }
   #cpu-hint.bad { color: crimson; }
+  /* the control bar: the kernel to boot, then the clock, one row under the scenario's text */
+  #controls { display: flex; flex-wrap: wrap; align-items: center; gap: .9rem; margin: .8rem 0 0; }
+  #controls #kernel { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  /* the kernel is one choice, the clock another: a rule between them, the row's height like .sep's */
+  #controls #clock { align-self: stretch; padding-left: .9rem; border-left: 1px solid color-mix(in srgb, GrayText 60%, transparent); }
   /* the two buttons are one group -- what you press; the rate box is a setting, behind a rule */
   #clock { display: inline-flex; gap: .35rem; align-items: center; font-size: 1rem; font-weight: normal; }
-  #clock label { font-size: .85rem; }                 /* the small text matches the tick count */
+  #clock label { font-size: .85rem; }
+  #play { width: 4.6rem; padding-left: 0; padding-right: 0; }   /* one width for both of its words, so the row does not shift as it toggles */
   /* align-self: stretch so the rule is the row's height, not the small text's */
-  #clock .sep { align-self: stretch; margin-left: .55rem; padding-left: .9rem; display: flex; align-items: center;
+  #clock .sep { align-self: stretch; margin-left: .55rem; padding-left: .9rem; display: flex; align-items: center; gap: .3rem;
                 border-left: 1px solid color-mix(in srgb, GrayText 60%, transparent); }
-  #tick-count { color: GrayText; font-size: .85rem; font-variant-numeric: tabular-nums; margin-left: .9rem; }
+  /* a flex item will not shrink below its intrinsic width, and a number box's is its default size
+     attribute's: min-width 0 lets the width set on it hold */
+  #clock .sep input { min-width: 0; width: 2rem; }
   #figure-picks { margin: 0 0 .7rem; display: flex; flex-direction: column; gap: .3rem; }
   .pick-row { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
   .pick-row > .pick-label { color: GrayText; font-size: .8rem; width: 4.2rem; flex: none; }
@@ -134,14 +142,21 @@
   #cpu-layout button.act { padding: 0 .3rem; font-size: .7rem; line-height: 1.5; white-space: nowrap;
     font-variant-numeric: tabular-nums; align-self: center; }
   #cpu-layout > button.act { margin-top: .2rem; }
-  #kernel-logs { margin-top: 1rem; }
+  /* the page keeps its scrollbar's width whether or not the content needs one, so a right-aligned
+     line does not jump when opening the logs makes the page taller */
+  html { scrollbar-gutter: stable; }
+  /* the machine's status ends the control row and stays there when the logs open: the details box
+     lays out as its children, so the summary is an item of the row and the panes take a row of their own */
+  #kernel-logs { display: contents; }
+  #kernel-logs summary { margin-left: auto; }
+  #kernel-logs #panes { flex-basis: 100%; }
   #kernel-logs summary { cursor: pointer; }
   #kernel-logs #status { margin-left: 0; color: inherit; }
   #kernel-logs #status.bad { color: crimson; font-weight: 600; }
-  #kernel-logs .hide-logs, #kernel-logs[open] .show-logs { display: none; }
-  #kernel-logs[open] .hide-logs { display: inline; }
   #kernel-logs #panes { margin-top: .6rem; }
-  #boot-preview { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: .25rem; color: GrayText; font: 12px/1.5 ui-monospace, monospace; }
+  /* one gray line: the status, the boot's latest console line while it lasts, and the log toggle */
+  #kernel-logs summary { color: GrayText; font-size: .85rem; }
+  #boot-preview { display: inline-block; max-width: 22rem; vertical-align: bottom; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: .5rem; font: 12px/1.5 ui-monospace, monospace; }
   pre .err { color: crimson; }
   pre .event { opacity: .6; }
 </style>
@@ -157,18 +172,21 @@
 <nav id="scenarios" aria-label="scenarios"></nav>
 <p id="scenario-text"></p>
 
-<details id="kernel-logs">
-  <summary><span id="status" role="status">Loading kernel…</span><span id="boot-elapsed" class="hint" aria-hidden="true"></span> · <span class="show-logs">Show logs</span><span class="hide-logs">Hide logs</span><span id="boot-preview" hidden></span></summary>
-  <div id="panes">
-    <div class="pane"><h3>Kernel console</h3><pre id="console"></pre></div>
-    <div class="pane"><h3>kSTEP trace</h3><pre id="log"></pre></div>
-  </div>
-</details>
+<div id="controls">
+  <label title="The Linux release the playground boots: every supported LTS kernel has an image. Changing it restarts with the same scenario."><select id="kernel"></select></label>
+  <span id="clock" hidden><button id="play" title="stop the clock">pause</button><button id="step" title="stop the clock and advance exactly one tick">step</button><button id="restart" title="restart the VM from this scenario's initial condition: the same machine and setup script, with fresh tasks, cgroups and charts (reloads the page)">restart</button>
+  <label class="sep"><input id="speed" type="number" min="1" max="1000" step="10" value="20" title="ticks per second while the clock runs"> ticks/s</label></span>
+  <details id="kernel-logs">
+    <summary><span id="status" role="status">Loading kernel…</span><span id="boot-elapsed" class="hint" aria-hidden="true"></span><span id="boot-preview" hidden></span> · logs</summary>
+    <div id="panes">
+      <div class="pane"><h3>Kernel console</h3><pre id="console"></pre></div>
+      <div class="pane"><h3>kSTEP trace</h3><pre id="log"></pre></div>
+    </div>
+  </details>
+</div>
 
 
-<h2>Charts <span id="clock" hidden><button id="play" title="stop the clock">⏸</button><button id="step" title="stop the clock and advance exactly one tick">step</button><button id="restart" title="restart the VM from this scenario's initial condition: the same machine and setup script, with fresh tasks, cgroups and charts (reloads the page)">↺</button>
-  <label class="sep"><input id="speed" type="number" min="1" max="1000" step="10" value="20" style="width:4.2rem" title="ticks per second while the clock runs"> ticks/s</label>
-  <span id="tick-count"></span></span></h2>
+<h2>Charts</h2>
 <div id="figure-picks"></div>
 <p class="hint" id="legend">One column per tick, newest on the right. Hover for values; wheel to pan back through the run, ctrl (or ⌘) wheel to zoom.</p>
 <div id="charts"></div>

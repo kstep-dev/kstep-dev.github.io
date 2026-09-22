@@ -19,7 +19,7 @@ import { image as stagedFiles, runKstep } from './site/kstep.mjs';
 const W = path.dirname(fileURLToPath(import.meta.url));
 const args = Object.fromEntries(process.argv.slice(2).map((a, i, all) => a.startsWith('--') ? [a.slice(2), all[i + 1]?.startsWith('--') ? '' : all[i + 1] ?? ''] : []).filter(x => x.length));
 const kstep = process.env.KSTEP_DIR ?? path.join(W, '..');
-const image = args.image ?? ('check' in args ? path.join(W, 'site', 'images', 'cli') : path.join(kstep, 'build', args.build ?? 'v6.18'));
+const image = args.image ?? ('check' in args ? path.join(W, 'site', 'images', 'v6.18') : path.join(kstep, 'build', args.build ?? 'v6.18'));
 const smp = Number(args.smp ?? ('snapshot' in args ? 5 : 3)), mem = Number(args.mem ?? 64), cpus = smp - 1;
 const t0 = Date.now(), elapsed = () => ((Date.now() - t0) / 1000).toFixed(1);
 
@@ -44,6 +44,9 @@ if ('snapshot' in args) {
 }
 
 if ('check' in args) {
+  // the machine first, as the page sends it: the spec is refused once a task exists
+  const topo = await cmd(`cpu-topo CPUS=${cpus}`);
+  if (topo.error) { console.error(`cpu-topo: ${topo.error}`); process.exit(1); }
   const pid = (await cmd('create')).task;
   // one command per verb the page sends; only "unknown command" counts as missing
   const verbs = ['tick', `policy-fair ${pid} normal 0`, `policy-rt ${pid} fifo 50`, `policy-fair ${pid} normal`, `affinity ${pid} 1`, 'cpu-freq 1=512', `pause ${pid}`, `wake ${pid}`,

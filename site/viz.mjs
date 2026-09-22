@@ -55,6 +55,7 @@ const colorOf = (task) => { const i = tasks.findIndex(t => t.id === task); retur
 // shared region could not report. The booted region says so itself in its header, so a mismatch
 // here only ever costs a rejected form, never a misread.
 const MAX_CPUS = 32;
+const SNAPSHOT_CPUS = 4;   // test CPUs in the staged snapshot (run.mjs --snapshot, smp 5): layouts up to this resume instead of booting
 // A machine is sockets of clusters of cores, and a core is its threads and what it is worth. At
 // eight CPUs there is no reason to compress equal cores into a count: listing them is simpler, and
 // it lets the picture below be the form, with a core as a thing you click rather than a number you
@@ -113,7 +114,7 @@ const groupSpec = (m, id) => { const g = new Map(); for (let c = 1; c <= nCpus(m
 // Only what differs from a machine of single-thread cores in one socket: SMT when a core has
 // threads, CLS always (the form always has clusters), MC and PKG when there are several sockets.
 function topoSpec(m) {
-  const parts = [];
+  const parts = [`CPUS=${nCpus(m)}`];   // the test CPUs; a larger VM keeps the rest idle and unseen, so one snapshot serves every smaller machine
   if (allCores(m).some(c => c.threads > 1)) parts.push(`SMT=${groupSpec(m, coreOf)}`);
   parts.push(`CLS=${groupSpec(m, clusterOf)}`);
   if (m.sockets.length > 1) parts.push(`MC=${groupSpec(m, socketOf)}`, `PKG=${groupSpec(m, socketOf)}`);
@@ -122,7 +123,7 @@ function topoSpec(m) {
   if (caps.size) parts.push(`CAP=${[...caps].map(([cap, cpus]) => `${cpus.join(',')}:${cap}`).join('|')}`);
   return parts.join(';');
 }
-const topoLevels = (spec) => spec.split(';').map(e => e.split('=')[0]).filter(k => k !== 'CAP');   // the levels a spec names
+const topoLevels = (spec) => spec.split(';').map(e => e.split('=')[0]).filter(k => k !== 'CAP' && k !== 'CPUS');   // the levels a spec names
 let layout = { first: 0, last: 0, width: 0, visible: 0 };   // the ticks the charts are showing
 // ---- the window: which ticks the charts show ----
 // The wheel pans and CELL -- the column width -- zooms; between them they fix the window, and
@@ -151,7 +152,6 @@ function panBy(ticks) {
 function draw() {
   computeWindow();
   drawCharts(layout);
-  $('tick-count').textContent = snapshots.length ? `tick ${snapshots.length}` : '';
 }
 
 // ---- figures: any per-task or per-CPU signal over the run's ticks ----
@@ -771,8 +771,9 @@ function machineFromScript(script) {
   if (!sockets.length) return null;
   const m = mach(...sockets);
   if (nCpus(m) !== n) return null;
-  // the parse is right exactly when it reproduces what the script said
-  m.exact = topoSpec(m) === topo;
+  // the parse is right exactly when it reproduces what the script said; a link from before CPUS
+  // was part of the spec still states its machine exactly
+  m.exact = topoSpec(m) === (topo.startsWith('CPUS=') ? topo : `CPUS=${n};${topo}`);
   return m;
 }
 
@@ -1198,7 +1199,7 @@ const enqueue = (fn) => { queue = queue.then(fn).catch(e => setStatus('error: ' 
 let timer = 0, running = true;
 function schedule() {
   clearTimeout(timer); timer = 0;
-  $('play').textContent = running ? '\u23f8' : '\u25b6';
+  $('play').textContent = running ? 'pause' : 'play';
   $('play').title = running ? 'stop the clock' : 'run the clock';
   const rate = +$('speed').value || 0;
   if (vm && running && rate > 0) timer = setTimeout(() => enqueue(step).then(schedule), 1000 / rate);
@@ -1240,6 +1241,10 @@ const SCENARIOS = {
     text: 'Six equal tasks on two CPUs, where cpu2 has half the capacity of cpu1. Wakeup placement at creation starts them 5 : 1. The balancer moves one task to the little core after a couple of hundred ticks and then stops at 4 : 2, matching the 2 : 1 capacity ratio; on two equal CPUs it would keep going to 3 : 3. Load is balanced per unit of capacity, not per task.' },
 };
 const params = new URLSearchParams(location.search);
+// The kernel is the one page parameter that is not part of the initial condition: it is carried
+// along whenever the page reloads itself into another scenario, script or view.
+let kernel = params.get('kernel');
+const withKernel = (p) => { if (kernel) p.set('kernel', kernel); return `${location.pathname}?${p}`; };
 const scenario = SCENARIOS[params.get('scenario')] ?? (params.has('script') ? null : SCENARIOS.free);
 // one tab per scenario; the running one is highlighted (none when the machine below was
 // changed and restarted by hand)
@@ -1247,7 +1252,7 @@ for (const [k, sc] of Object.entries(SCENARIOS)) {
   const b = document.createElement('button'); b.textContent = sc.title;
   b.classList.toggle('active', SCENARIOS[k] === scenario);
   if (SCENARIOS[k] === scenario) b.setAttribute('aria-current', 'page');
-  b.onclick = () => location.replace(`${location.pathname}?scenario=${k}`);
+  b.onclick = () => location.replace(withKernel(new URLSearchParams({ scenario: k })));
   $('scenarios').append(b);
 }
 $('scenario-text').textContent = scenario ? scenario.text : 'A machine of your own.';
@@ -1291,7 +1296,7 @@ $('boot').onclick = () => {
   if (!refreshLayout()) return;
   // capacity is live, so the reboot carries what the kernel has now -- not a stale form value
   const next = scriptWith(script, draft);
-  location.replace(`${location.pathname}?script=${encodeURIComponent(next.join('\n'))}`);
+  location.replace(withKernel(new URLSearchParams({ script: next.join('\n') })));
 };
 
 async function boot() {
@@ -1299,8 +1304,11 @@ async function boot() {
     setStatus('Downloading kernel…', false, true);
     // ?v busts the browser cache after a restage; a 404 is "not staged" (the snapshot exists for
     // the default CPU count only, and resuming it skips the ~4 s boot: other machines boot cold)
-    const get = (name) => fetch(`images/cli/${name}?v=${V}`).then(r => r.ok ? r.arrayBuffer() : r.status === 404 ? null : Promise.reject(new Error(`${name}: HTTP ${r.status}`)));
-    const smp = ncpus + 1;
+    const get = (name) => fetch(`images/${kernel}/${name}?v=${V}`).then(r => r.ok ? r.arrayBuffer() : r.status === 404 ? null : Promise.reject(new Error(`${name}: HTTP ${r.status}`)));
+    // The VM is the snapshot's machine whenever the layout fits in it: the spec's CPUS keeps the
+    // CPUs beyond the layout idle and out of the scheduler's domains (kmod/cpu.c), and the trace
+    // is the one a machine of exactly that size gives. Larger layouts boot cold at their own size.
+    const smp = ncpus <= SNAPSHOT_CPUS ? SNAPSHOT_CPUS + 1 : ncpus + 1;
     const [files, { default: Module }] = await Promise.all([image(smp, get), import(`./qemu/qemu-system-aarch64.js?v=${V}`)]);
     setStatus(files.snapshot ? 'Resuming kernel…' : 'Booting kernel…', false, true);
     const onConsole = (line) => {
@@ -1339,6 +1347,11 @@ async function boot() {
 // only on the isolated page. Hard reloads bypass service workers, hence the fallback message.
 export function init(data) {
   V = data.version; bugs = data.bugs ?? [];
+  // the kernels with a staged image; an unknown or absent ?kernel= is the default one
+  const kernels = data.kernels ?? ['v6.18'];
+  if (!kernels.includes(kernel)) kernel = data.kernel ?? kernels[0];
+  $('kernel').replaceChildren(...kernels.map((k) => new Option(`Linux ${k.slice(1)}`, k, false, k === kernel)));
+  $('kernel').onchange = () => { kernel = $('kernel').value; location.replace(withKernel(new URLSearchParams(location.search))); };
   renderBugs();
   if (V && crossOriginIsolated) boot();
   else if (V) { setStatus('Preparing browser for kernel startup…', false, true);
