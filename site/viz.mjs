@@ -253,9 +253,9 @@ const FIGURES = {
   // fair-class metrics read the task's fair record, so a task under fifo or rr draws a gap
   vruntime:  { title: 'vruntime', domain: 'task', get: (r) => r.fair && NS(r.fair.vruntime),
     note: 'runtime divided by weight, so under a fair split every task’s line climbs at the same rate whatever its nice — among tasks in the same cgroup, each cgroup having a queue and a virtual clock of its own' },
-  lag:       { title: 'lag', domain: 'task', get: (r) => r.fair && NS(r.fair.lag),
+  lag:       { title: 'lag', domain: 'task', eevdf: true, get: (r) => r.fair && NS(r.fair.lag),
     note: 'the queue’s average vruntime minus the task’s, so zero is exactly fair, above it the task is owed time and below it has run ahead; unlike vruntime it is comparable across queues and does not jump when a task moves' },
-  deadline:  { title: 'deadline', domain: 'task', get: (r) => r.fair && NS(r.fair.deadline),
+  deadline:  { title: 'deadline', domain: 'task', eevdf: true, get: (r) => r.fair && NS(r.fair.deadline),
     note: 'EEVDF runs the eligible task with the earliest deadline, so the lowest line is the one that should be running' },
   queues:    { title: 'Runnable tasks', domain: 'cpu',  get: (r) => r.fair?.h_nr_runnable, integer: true,
     note: 'the balancer’s own count, h_nr_runnable, which leaves out a task queued only by delayed dequeue: it moves work to even these out, per unit of capacity rather than per task' },
@@ -1059,14 +1059,18 @@ function renderGroups() {
 // and the share are the kernel's, read from the class's records; this code only lays them out.
 // Rebuilt whole every command; nothing here is typed into. ----
 let entities = [];   // the cgroups' group entities; a task's fair record is on the task itself (stat.fair)
+// What the kernel's fair class has, from the region's header: before EEVDF (6.6) there is no lag,
+// deadline, eligibility or pick, so those columns and figures are left out rather than shown blank.
+let eevdf = true;
+const queueCols = () => QUEUE_COLS.filter((c) => eevdf || c[3] !== 'eevdf');
 const QUEUE_COLS = [   // lag is printed always signed, so the column holds its width
   ['weight', (e) => e.weight, 'the entity\u2019s weight against its siblings on this queue, which is the only weight the scheduler compares: a task\u2019s from its nice, a cgroup\u2019s from cpu.weight divided between the CPUs by calc_group_shares'],
   ['share', (e) => `${(e.share * 100).toFixed(e.share < 0.1 ? 1 : 0)}%`, 'the share of this CPU the entity gets while everything queued stays queued: its weight over the queue\u2019s total, times its parent cgroup\u2019s share -- 1024 of 2048 on the root queue, then 1024 of 3072 inside the cgroup, is a sixth'],
-  ['eligible', (e) => e.eligible ? '\u2713' : '', 'entity_eligible: lag \u2265 0, so EEVDF may pick it; an ineligible row is also greyed'],
-  ['lag', (e) => (e.lag < 0 ? '\u2212' : '+') + ms(Math.abs(e.lag)), 'the queue\u2019s average vruntime minus this entity\u2019s, in virtual ms: zero is fair, positive is owed time; EEVDF only picks entities with lag \u2265 0. Live while queued; the kernel\u2019s saved se->vlag, which place_entity restores, while not'],
+  ['eligible', (e) => e.eligible ? '\u2713' : '', 'entity_eligible: lag \u2265 0, so EEVDF may pick it; an ineligible row is also greyed', 'eevdf'],
+  ['lag', (e) => (e.lag < 0 ? '\u2212' : '+') + ms(Math.abs(e.lag)), 'the queue\u2019s average vruntime minus this entity\u2019s, in virtual ms: zero is fair, positive is owed time; EEVDF only picks entities with lag \u2265 0. Live while queued; the kernel\u2019s saved se->vlag, which place_entity restores, while not', 'eevdf'],
   ['vruntime', (e) => ms(e.vruntime), 'virtual ms on this queue\u2019s own clock: comparable only with the other rows of this queue'],
-  ['deadline', (e) => ms(e.deadline), 'vruntime plus the slice scaled by weight: among the eligible, the earliest runs'],
-  ['slice left', (e) => e.curr ? ms(Math.max(0, e.deadline - e.vruntime)) : '', 'for the entity running at each level -- the task, and the cgroup entities above it, each curr on its own queue -- its deadline minus its vruntime in virtual ms: until it reaches zero it keeps the CPU (RUN_TO_PARITY), and then the eligible entity with the earliest deadline is picked'],
+  ['deadline', (e) => ms(e.deadline), 'vruntime plus the slice scaled by weight: among the eligible, the earliest runs', 'eevdf'],
+  ['slice left', (e) => e.curr ? ms(Math.max(0, e.deadline - e.vruntime)) : '', 'for the entity running at each level -- the task, and the cgroup entities above it, each curr on its own queue -- its deadline minus its vruntime in virtual ms: until it reaches zero it keeps the CPU (RUN_TO_PARITY), and then the eligible entity with the earliest deadline is picked', 'eevdf'],
 ];
 const parentOf = (p) => p.slice(0, p.lastIndexOf('/')) || '/';
 function queueRows(cpu, path, depth, byCpu, tb) {
@@ -1077,13 +1081,13 @@ function queueRows(cpu, path, depth, byCpu, tb) {
   ];
   for (const { task: t, e } of rows) {
     const tr = tb.insertRow();
-    if (!e.eligible) tr.classList.add('ineligible');
+    if (eevdf && !e.eligible) tr.classList.add('ineligible');
     if (e.curr) tr.classList.add('running');        // curr at this level: the running task, or the cgroup it runs under
     else if (e.pick) tr.classList.add('next');      // what pick_eevdf would take instead, where that differs
     const first = tr.insertCell(); first.style.paddingLeft = `${depth * 1.2}rem`;
     if (t) first.append(chip(t));
     else { const c = document.createElement('span'); c.className = 'path'; c.textContent = e.cgroup; first.append(c); }
-    for (const [, get] of QUEUE_COLS) tr.insertCell().textContent = get(e);
+    for (const [, get] of queueCols()) tr.insertCell().textContent = get(e);
     if (!t) queueRows(cpu, e.cgroup, depth + 1, byCpu, tb);   // the cgroup's own queue, indented beneath its entity
   }
 }
@@ -1099,7 +1103,7 @@ function classTable(cpu, label, note, cols, firstTitle) {
   return { box, tb: table.createTBody() };
 }
 function fairTable(cpu, byCpu) {
-  const { box, tb } = classTable(cpu, 'fair', '', QUEUE_COLS,
+  const { box, tb } = classTable(cpu, 'fair', '', queueCols(),
     'a task, in its colour, or a cgroup\u2019s entity; indented rows are the queue inside that cgroup. \u25B6 is curr at its level: the task that ran this tick and the cgroup entities it ran under; \u25B7 is what pick_eevdf would take next, where that differs');
   tb.parentElement.tHead.rows[0].cells[0].textContent = 'entity';
   queueRows(cpu, '/', 0, byCpu, tb);
@@ -1159,6 +1163,11 @@ async function cmd(line) {
   const reply = await vm.cmd(line);
   append(JSON.stringify(reply), reply.error ? 'err' : '');
   const st = vm.shm();
+  if (eevdf !== st.eevdf) {
+    eevdf = st.eevdf;
+    for (const [id, f] of Object.entries(FIGURES)) if (f.eevdf) picks.get(id).parentElement.hidden = !eevdf;
+    if (!eevdf) setCharts(charts.map((c) => c.id).filter((id) => !FIGURES[id].eevdf));
+  }
   for (const e of vm.events()) append(JSON.stringify(e), 'event');   // the trace, in the log pane
   // The region keeps each class's records in tables of their own (kmod/shm.h); the page joins
   // them here, once: a CPU record carries the fair and real-time queues on it as .fair and .rt,

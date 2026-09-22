@@ -28,8 +28,7 @@
 // kSTEP's core (crates/core, compiled to wasm and placed next to this file by `kstep viz`) knows
 // QEMU's arguments and decodes the machine's state (shm.rs, whose structs are generated from
 // kmod/shm.h). It runs in its own wasm instance, so the region is copied out of QEMU's memory
-// per call: a few hundred KB. JS owns that memory and so the seqlock retry: a null result means
-// mid-update.
+// per call: under a hundred KB.
 async function loadCore() {
   const v = new URL(import.meta.url).search;   // the page's cache-busting ?v=, carried over
   const core = await import(`./kstep_core.js${v}`);
@@ -117,7 +116,7 @@ export async function runKstep(Module, { files, smp, mem, onConsole, locateFile 
     }
     return reply;
   };
-  const shm = () => { for (;;) { const st = core.shm_decode(bytes.slice()); if (st) return st; } };
+  const shm = () => core.shm_decode(bytes.slice());
   const events = () => trace.splice(0);   // the records seen since the last call
   // The machine's state as a migration stream (RAM and devices; zero pages are skipped, so it is
   // ~14 MB for 64 MB of RAM, ~3 MB gzip'd). Between commands the guest is idle, so the stream

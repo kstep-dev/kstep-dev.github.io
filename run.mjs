@@ -75,7 +75,7 @@ if ('check' in args) {
   if (!statsOk) { console.error('playground image lacks valid CPU/runqueue snapshots; rebuild it from the current kmod'); process.exit(1); }
   if (!domOk) { console.error('playground image reports no sched domains; rebuild it from the current kmod'); process.exit(1); }
   if (missing.length) { console.error(`playground image lacks: ${missing.join(', ')}`); process.exit(1); }
-  console.log(`playground image: all ${verbs.length} verbs answered; CPU/runqueue and sched-domain snapshots verified`);
+  console.log(`playground image: all ${verbs.length} verbs answered; CPU/runqueue and sched-domain snapshots verified; fair class ${st.eevdf ? 'EEVDF' : 'CFS'}`);
 } else if ('bench' in args) {
   const seconds = Number(args.bench || 10);
   for (let i = 0; i < Number(args.tasks ?? 3); i++) await cmd('create');
