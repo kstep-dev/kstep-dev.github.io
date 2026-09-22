@@ -72,9 +72,7 @@
   /* align-self: stretch so the rule is the row's height, not the small text's */
   #clock .sep { align-self: stretch; margin-left: .55rem; padding-left: .9rem; display: flex; align-items: center; gap: .3rem;
                 border-left: 1px solid color-mix(in srgb, GrayText 60%, transparent); }
-  /* a flex item will not shrink below its intrinsic width, and a number box's is its default size
-     attribute's: min-width 0 lets the width set on it hold */
-  #clock .sep input { min-width: 0; width: 2rem; }
+  #clock .sep input { min-width: 0; }   /* the browser's default number-box width; min-width 0 lets it shrink in the flex row */
   #figure-picks { margin: 0 0 .7rem; display: flex; flex-direction: column; gap: .3rem; }
   .pick-row { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
   .pick-row > .pick-label { color: GrayText; font-size: .8rem; width: 4.2rem; flex: none; }
