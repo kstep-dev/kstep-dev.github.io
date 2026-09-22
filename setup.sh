@@ -2,59 +2,42 @@
 # One-time setup: build qemu-system-aarch64 for a wasm64 host, end to end.
 #   ./setup.sh            # all stages
 #   ./setup.sh qemu       # just reconfigure+rebuild QEMU
-# Stages: setup (apt, emsdk, meson) -> deps (zlib, libffi, pixman, glib) -> qemu.
+# Stages: setup (apt, emsdk) -> deps (zlib, libffi, glib; QEMU needs zlib and glib, the wasm JIT
+# calls helpers through libffi; pixman is a disabled feature in this build) -> qemu.
 # Output: site/qemu/ (qemu-system-aarch64.{js,wasm}; the virt machine needs no firmware), served/deployed as-is.
 # Needed once per checkout; build.py assembles the site around what this leaves behind.
 set -euo pipefail
 W=$(cd "$(dirname "$0")" && pwd)
 stage=${1:-all}
 mkdir -p "$W/build"
-# Kohei Tokunaga's QEMU branch carrying the wasm JIT backend (QEMU 10.2.50 + his 33
-# commits), pinned to a commit. See README for the v11.1.0 rebase attempt.
-QEMU_REPO=https://github.com/ktock/qemu
-QEMU_COMMIT=8f1406ba3307a10c58be24a8ff00ab6a5d3b6169   # branch wasm64-tcg-b, 2026-01-14
+# QEMU is the qemu/ submodule: https://github.com/kstep-dev/qemu, branch kstep = upstream
+# v11.1.1 + Kohei Tokunaga's wasm64 JIT backend (squashed from ktock/qemu wasm64-tcg-b) + the
+# kSTEP tuning commit (1 GB heap, INSTANTIATE_NUM 300, 4 virtio-mmio slots, the kstep device set).
 EMSDK_VERSION=4.0.23
 
-toolchain() {  # emsdk, meson venv, and the cross-built deps prefix
+toolchain() {  # emsdk and the cross-built deps prefix
   source "$W/build/emsdk/emsdk_env.sh" >/dev/null 2>&1
-  export PATH="$W/build/venv/bin:$PATH"
   export TARGET="$W/build/deps/target" CPATH="$W/build/deps/target/include"
   export PKG_CONFIG_PATH="$TARGET/lib/pkgconfig" EM_PKG_CONFIG_PATH="$TARGET/lib/pkgconfig"
 }
 
 setup() {
-  sudo apt-get install -y -q autoconf build-essential libglib2.0-dev libtool pkgconf ninja-build python3-pip python3-venv
+  sudo apt-get install -y -q autoconf build-essential libglib2.0-dev libtool pkgconf ninja-build
   if [ ! -d "$W/build/emsdk" ]; then
     git clone -q --depth 1 https://github.com/emscripten-core/emsdk.git "$W/build/emsdk"
     (cd "$W/build/emsdk" && ./emsdk install $EMSDK_VERSION && ./emsdk activate $EMSDK_VERSION)
   fi
-  [ -d "$W/build/venv" ] || { python3 -m venv "$W/build/venv" && "$W/build/venv/bin/pip" -q install meson==1.5.0 tomli; }
 }
 
-# Mirrors upstream tests/docker/dockerfiles/emsdk-wasm64-cross.docker, without Docker.
+# Mirrors upstream tests/docker/dockerfiles/emsdk-wasm64-cross.docker, without Docker; glib's meson
+# build reads cross.meson next to this script.
 deps() {
   toolchain
   export CFLAGS="-O3 -pthread -DWASM_BIGINT -sMEMORY64=1" CXXFLAGS="-O3 -pthread -DWASM_BIGINT -sMEMORY64=1"
   export LDFLAGS="-sWASM_BIGINT -sASYNCIFY=1 -L$TARGET/lib -sMEMORY64=1"
+  meson() { uvx --from meson==1.5.0 meson "$@"; }   # glib's build system (QEMU brings its own)
+  link_args="[$(printf "'%s', " $LDFLAGS | sed 's/, $//')]"   # LDFLAGS as a meson array
   mkdir -p "$TARGET" "$W/build/deps" && cd "$W/build/deps"
-  cat > cross.meson <<EOT
-[host_machine]
-system = 'emscripten'
-cpu_family = 'wasm64'
-cpu = 'wasm64'
-endian = 'little'
-[binaries]
-c = 'emcc'
-cpp = 'em++'
-ar = 'emar'
-ranlib = 'emranlib'
-pkgconfig = ['pkg-config', '--static']
-[built-in options]
-c_args = [$(printf "'%s', " $CFLAGS -Wno-incompatible-function-pointer-types | sed 's/, $//')]
-cpp_args = [$(printf "'%s', " $CXXFLAGS | sed 's/, $//')]
-c_link_args = [$(printf "'%s', " $LDFLAGS | sed 's/, $//')]
-cpp_link_args = [$(printf "'%s', " $LDFLAGS | sed 's/, $//')]
-EOT
   if [ ! -f "$TARGET/lib/libz.a" ]; then
     mkdir -p zlib && curl -Ls https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.xz | tar xJC zlib --strip-components=1
     (cd zlib && emconfigure ./configure --prefix="$TARGET" --static && emmake make install -j"$(nproc)")
@@ -65,16 +48,12 @@ EOT
       --enable-static --disable-shared --disable-dependency-tracking --disable-builddir \
       --disable-multi-os-directory --disable-raw-api --disable-docs && emmake make install SUBDIRS='include' -j"$(nproc)")
   fi
-  if [ ! -f "$TARGET/lib/libpixman-1.a" ]; then
-    [ -d pixman ] || git clone -q --depth 1 -b pixman-0.44.2 https://gitlab.freedesktop.org/pixman/pixman
-    (cd pixman && meson setup _build --prefix="$TARGET" --cross-file=../cross.meson \
-      --default-library=static --buildtype=release -Dtests=disabled -Ddemos=disabled && meson install -C _build)
-  fi
   if [ ! -f "$TARGET/lib/libglib-2.0.a" ]; then
     printf '#include <netdb.h>\nint res_query(const char *n, int c, int t, unsigned char *d, int l) { h_errno = HOST_NOT_FOUND; return -1; }\n' > res_query.c
     emcc $CFLAGS -c res_query.c -o res_query.o && emar rcs "$TARGET/lib/libresolv.a" res_query.o
     [ -d glib ] || { mkdir glib && curl -Ls https://download.gnome.org/sources/glib/2.84/glib-2.84.0.tar.xz | tar xJC glib --strip-components=1; }
-    (cd glib && rm -rf _build && meson setup _build --prefix="$TARGET" --cross-file=../cross.meson \
+    (cd glib && rm -rf _build && meson setup _build --prefix="$TARGET" --cross-file="$W/cross.meson" \
+      -Dc_link_args="$link_args" -Dcpp_link_args="$link_args" \
       --default-library=static --buildtype=release --force-fallback-for=pcre2 \
       -Dselinux=disabled -Dlibelf=disabled -Dxattr=false -Dlibmount=disabled -Dnls=disabled \
       -Dtests=false -Dglib_debug=disabled -Dglib_assert=false -Dglib_checks=false \
@@ -94,33 +73,8 @@ qemu() {
   if ! grep -q pollTimer "$lib"; then
     sed -i 's/^    var notifyDone = false;$/    var notifyDone = false;\n    var pollTimer;/; s/^      notifyDone = true;$/      notifyDone = true;\n      clearTimeout(pollTimer);/; s/^        setTimeout(() => {$/        pollTimer = setTimeout(() => {/' "$lib"
   fi
-  src="$W/build/qemu"
-  if [ ! -d "$src" ]; then
-    git init -q "$src" && git -C "$src" fetch -q --depth 1 "$QEMU_REPO" "$QEMU_COMMIT" && git -C "$src" checkout -q FETCH_HEAD
-  fi
-  # The wasm heap size is fixed at link time by QEMU's configs/meson/emscripten.txt (2 GB
-  # upstream). 1 GB is plenty: a run touches ~0.6 GB, and smaller reservations work on more
-  # browsers (phones, Safari).
-  sed -i 's/-sTOTAL_MEMORY=2GB/-sTOTAL_MEMORY=1GB/' "$src/configs/meson/emscripten.txt"
-  # The JIT compiles a translation block to wasm after it has run INSTANTIATE_NUM times in the
-  # interpreter (1500 upstream). kSTEP runs are short, so most time goes to interpreting boot
-  # code: 300 cut a run from 7.2 s to 6.0 s here (50: 5.6 s, but many more wasm modules). On the
-  # arm64 build 50 and 300 boot alike (3.8-4.7 s, within the noise), and the page resumes from a
-  # snapshot anyway, so 300 stays.
-  sed -i 's/^#define INSTANTIATE_NUM .*/#define INSTANTIATE_NUM 300/' "$src/tcg/wasm64.c"
-  # The virt board always creates 32 virtio-mmio transports; the kernel probes each (~0.4 s of a
-  # 4 s boot under wasm). kSTEP puts its one virtio-serial device on the first; a few spare.
-  sed -i 's/^#define NUM_VIRTIO_TRANSPORTS .*/#define NUM_VIRTIO_TRANSPORTS 4/' "$src/include/hw/arm/virt.h"
-  # The virt machine puts 32 virtio-mmio transports in its device tree (a compile-time constant);
-  # the kernel probes every one, ~0.4 s of the boot under wasm. kSTEP plugs in one
-  # virtio-serial-device, so 4 (mmio slots are also what -device without a bus= picks from).
-  sed -i 's/^#define NUM_VIRTIO_TRANSPORTS .*/#define NUM_VIRTIO_TRANSPORTS 4/' "$src/include/hw/arm/virt.h"
-  # Only the virt machine and the virtio console, not the ~360 devices of the default arm64
-  # build: --without-default-devices drops everything the machine does not select. virt's ACPI
-  # code links against hw/cxl, which upstream only enables by default, so name it explicitly,
-  # with PXB (it depends on it), its memory device (it links against it) and PCIE_PORT (the
-  # parent QOM type of its root port).
-  printf 'CONFIG_ARM_VIRT=y\nCONFIG_VIRTIO_SERIAL=y\nCONFIG_PXB=y\nCONFIG_CXL=y\nCONFIG_CXL_MEM_DEVICE=y\nCONFIG_PCIE_PORT=y\n' > "$src/configs/devices/aarch64-softmmu/kstep.mak"
+  src="$W/qemu"
+  [ -f "$src/configure" ] || git -C "$W" submodule update --init --depth 1 qemu
   mkdir -p "$src/build" && cd "$src/build"
   emconfigure ../configure --static --cpu=wasm64 --enable-wasm64-32bit-address-limit --cross-prefix= \
     --target-list=aarch64-softmmu --without-default-devices --with-devices-aarch64=kstep \

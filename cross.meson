@@ -1,0 +1,19 @@
+# Meson cross file for the wasm64 dependencies setup.sh builds (glib; QEMU's configure writes its
+# own). Mirrors QEMU's tests/docker/dockerfiles/emsdk-wasm64-cross.docker. -sMEMORY64=1 here, while
+# QEMU itself is built with --enable-wasm64-32bit-address-limit (64-bit pointers in C, wasm32
+# output). Link args come from setup.sh (-Dc_link_args) because they carry the absolute path of
+# the deps prefix, where the libresolv stub for glib's res_query check lives.
+[host_machine]
+system = 'emscripten'
+cpu_family = 'wasm64'
+cpu = 'wasm64'
+endian = 'little'
+[binaries]
+c = 'emcc'
+cpp = 'em++'
+ar = 'emar'
+ranlib = 'emranlib'
+pkgconfig = ['pkg-config', '--static']
+[built-in options]
+c_args = ['-O3', '-pthread', '-DWASM_BIGINT', '-sMEMORY64=1', '-Wno-incompatible-function-pointer-types']
+cpp_args = ['-O3', '-pthread', '-DWASM_BIGINT', '-sMEMORY64=1']

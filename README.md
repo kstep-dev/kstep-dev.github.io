@@ -6,9 +6,14 @@ arm64 kernel with the interactive `cli` driver so visitors can create tasks, tic
 and watch who runs where. The kernel image ships with the site; the site itself is the page
 plus a 13 MB QEMU build. Below the playground, a static catalog of the reproduced bugs.
 
-QEMU is Kohei Tokunaga's `wasm64-tcg-b` branch of https://github.com/ktock/qemu
-(QEMU 10.2.50 plus his wasm JIT backend), pinned to a commit in `setup.sh`.
-Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x slower.
+QEMU is the `qemu/` submodule, https://github.com/kstep-dev/qemu branch `kstep`: upstream
+v11.1.1 plus Kohei Tokunaga's wasm64 JIT backend (https://github.com/ktock/qemu, branch
+`wasm64-tcg-b`, squashed into one commit and rebased) and one commit of kSTEP tuning (1 GB
+wasm heap, JIT threshold 300, 4 virtio-mmio slots, a device list of just the virt machine
+and the virtio console). Upstream QEMU can target wasm64 too but only with the TCI
+interpreter, about 4x slower. To move to a newer QEMU: rebase the two commits onto the new
+tag (v10.2.50 -> v11.1.1 needed no code change), rebuild with `./setup.sh qemu`, then
+`./run.mjs --cold` and `--bench`; snapshots are per QEMU build, so `kstep viz build` retakes them.
 
 ## Layout
 
@@ -18,7 +23,9 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 | `site/viz.mjs` | the front end: session state, the VM transport, the figures, the tables and the topology editor. `index.html` fetches `data.json` for the version stamp (which busts this module's cache) and calls its `init()` |
 | `pagetest.mjs` | `site/viz.mjs` under Node with a DOM stub: it loads the module, drives the controls and checks a plain load, redraws, the figure toggles and `?charts=` links. A `kstep viz deploy` gate |
 | `site/kstep.mjs` | shared by the page and `run.mjs`: the Emscripten device nodes, the `cli` driver's command/reply protocol, completion detection, `snapshot()` (the machine as a migration stream, `migrate file:` on the monitor) and resuming from one (`-incoming`), and the calls into kSTEP's core (`kstep_core.js`: QEMU's arguments and the decoder for the machine's state, `crates/core` built for wasm32) |
-| `setup.sh` | one-time: `setup` (apt, emsdk, meson), `deps` (zlib, libffi, pixman, glib for wasm64), `qemu` (aarch64-softmmu, virt machine only, into `site/qemu/`) |
+| `qemu/` | submodule: the QEMU source `setup.sh qemu` builds (shallow, branch `kstep` of kstep-dev/qemu) |
+| `cross.meson` | meson cross file for the wasm64 dependencies (`setup.sh deps`) |
+| `setup.sh` | one-time: `setup` (apt, emsdk), `deps` (zlib, libffi, glib for wasm64), `qemu` (aarch64-softmmu, virt machine only, into `site/qemu/`) |
 | `kstep viz` (in the parent repo: `../kstep.sh viz`) | builds the site: compiles `crates/core` for wasm32 into `site/kstep_core.js` + `kstep_core_bg.wasm`, writes `site/data.json` (version stamp and the bug catalog from `bugs.yaml`) and rebuilds and copies a playground image per supported LTS kernel (kSTEP's `build/v5.15` .. `build/v6.18`, arm64, with the current kmod and user.c, checked out and built on first run) into `site/images/<kernel>/` and snapshots each at the driver's ready line for the page's default machine (`run.mjs --snapshot`: `snap-5.bin.gz`, ~3 MB, resumed in ~0.3 s instead of a ~4 s boot; an image that did not change keeps its snapshot; layouts over 4 CPUs boot cold). That is `kstep viz build`; plain `kstep viz [--port N]` builds the same way first, incrementally, then serves `site/` locally, and `kstep viz serve` only serves (page edits show on a reload), and `kstep viz deploy` builds, gates on `pagetest.mjs` and `run.mjs --check` and force-pushes `site/` as the orphan `gh-pages` branch. Needs `rustup target add wasm32-unknown-unknown` and `cargo install wasm-bindgen-cli` at the version in `Cargo.lock` |
 | `run.mjs` | the playground headless under Node (>= 20): the round-robin demo (who ran on which CPU), `--bench <s>` for `tick`/`top` latency, `--check` to verify the staged image answers every verb the page uses and its snapshot resumes (the deploy gate), `--snapshot` to write the snapshot for `--smp` (default 5) next to `--image`; a run resumes from the image's snapshot when there is one, `--cold` boots regardless |
 | `site/index.html` | the front page: the playground, which boots a kernel with the `cli` driver on a configurable machine (sockets × clusters × cores × threads, per-core capacity), creates tasks and ticks the scheduler; a stack of uPlot figures over the same ticks (one toggle per figure, grouped per task and per CPU, the set living in `?charts=`) sharing one window, one zoom and one crosshair, with Placement -- a row per CPU, shared out among the tasks on it -- shown by default; then the Workload (tasks and cgroups as an outline, with policy, nice or priority, affinity and cgroup controls per task), the Scheduler (a box per CPU with its class queues), the Load balancer (the sched domains as nested boxes down to the CPUs, one running bar each coloured by the balancer's class, the balance countdowns and a log of what moved) and the Topology editor; a control bar under the scenarios holds the kernel selector, the clock and the kernel's status |

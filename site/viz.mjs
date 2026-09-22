@@ -55,7 +55,7 @@ const colorOf = (task) => { const i = tasks.findIndex(t => t.id === task); retur
 // shared region could not report. The booted region says so itself in its header, so a mismatch
 // here only ever costs a rejected form, never a misread.
 const MAX_CPUS = 32;
-const SNAPSHOT_CPUS = 4;   // test CPUs in the staged snapshot (run.mjs --snapshot, smp 5): layouts up to this resume instead of booting
+let SNAPSHOT_CPUS = 4;     // test CPUs in the staged snapshot, from data.json (kstep viz writes it): layouts up to this resume instead of booting
 // A machine is sockets of clusters of cores, and a core is its threads and what it is worth. At
 // eight CPUs there is no reason to compress equal cores into a count: listing them is simpler, and
 // it lets the picture below be the form, with a core as a thing you click rather than a number you
@@ -1477,6 +1477,7 @@ export function init(data) {
   V = data.version; bugs = data.bugs ?? [];
   // the kernels with a staged image; an unknown or absent ?kernel= is the default one
   const kernels = data.kernels ?? ['v6.18'];
+  SNAPSHOT_CPUS = data.snapshot_cpus ?? SNAPSHOT_CPUS;
   if (!kernels.includes(kernel)) kernel = data.kernel ?? kernels[0];
   $('kernel').replaceChildren(...kernels.map((k) => new Option(`Linux ${k.slice(1)}`, k, false, k === kernel)));
   $('kernel').onchange = () => { kernel = $('kernel').value; location.replace(withKernel(new URLSearchParams(location.search))); };

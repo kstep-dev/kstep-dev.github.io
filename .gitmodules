@@ -1,0 +1,5 @@
+[submodule "qemu"]
+	path = qemu
+	url = https://github.com/kstep-dev/qemu
+	branch = kstep
+	shallow = true

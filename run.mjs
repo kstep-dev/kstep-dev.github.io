@@ -63,15 +63,17 @@ if ('check' in args) {
   const domOk = dom && dom.name && dom.flags && dom.groups.length >= 2 && dom.imbalance_pct > 0
     && dom.balancer >= 1 && dom.balancer <= cpus && dom.next_balance_in <= 1000;   // a CPU of the machine, and a countdown in ticks, not a wrapped one
   await cmd('exit');
-  // the page's default machine resumes from a snapshot: it must answer too, with the same driver
-  if (fs.existsSync(path.join(image, 'snap-5.json'))) {
-    const vm = await boot(5);
+  // the staged snapshot, whatever machine it was taken for (kstep viz decides), must answer too,
+  // with the same driver
+  const snap = fs.readdirSync(image).map((f) => /^snap-(\d+)\.json$/.exec(f)?.[1]).find(Boolean);
+  if (snap) {
+    const vm = await boot(Number(snap));
     if (!vm.resumed) { console.error('snapshot not used'); process.exit(1); }
     const stale = new Promise((_, rej) => setTimeout(() => rej(new Error('snapshot answered nothing in 20 s: restage it (kstep viz) after a QEMU or image rebuild')), 20000));
     await Promise.race([vm.cmd(null).then(() => vm.cmd('tick')), stale]);
     if (!vm.shm().cpus.find(r => r.cpu === 1)) { console.error('snapshot resumed without CPU records'); process.exit(1); }
     await vm.cmd('exit');
-    console.log('snapshot (smp=5): resumed and answered');
+    console.log(`snapshot (smp=${snap}): resumed and answered`);
   }
   if (!statsOk) { console.error('playground image lacks valid CPU/runqueue snapshots; rebuild it from the current kmod'); process.exit(1); }
   if (!domOk) { console.error('playground image reports no sched domains; rebuild it from the current kmod'); process.exit(1); }
