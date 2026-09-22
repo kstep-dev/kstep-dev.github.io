@@ -49,7 +49,7 @@ if ('check' in args) {
   if (topo.error) { console.error(`cpu-topo: ${topo.error}`); process.exit(1); }
   const pid = (await cmd('create')).task;
   // one command per verb the page sends; only "unknown command" counts as missing
-  const verbs = ['tick', `policy-fair ${pid} normal 0`, `policy-rt ${pid} fifo 50`, `policy-fair ${pid} normal`, `affinity ${pid} 1`, 'cpu-freq 1=512', `pause ${pid}`, `wake ${pid}`,
+  const verbs = ['tick', `policy-fair ${pid} normal 0`, `policy-rt ${pid} fifo 50`, `policy-fair ${pid} normal`, `affinity ${pid} 1`, 'cpu-freq 1=512', `pause ${pid}`, `wake ${pid}`, `yield ${pid}`,
     'cgroup-create /check', 'cgroup-weight /check 100', 'cgroup-cpus /check 1', `cgroup-attach /check ${pid}`, 'create /check', `kill ${pid}`];
   const missing = [];
   for (const v of verbs) if ((await cmd(v)).error === 'unknown command') missing.push(v.split(' ')[0]);
@@ -60,7 +60,8 @@ if ('check' in args) {
     && ok(fair, ['util_avg', 'load_avg', 'runnable_avg', 'h_nr_runnable']) && ok(rt, ['nr_running', 'highest_prio', 'rt_runtime']);
   // the sched domains the page shows: at least one level, with groups and the kernel's flag names
   const dom = shm().domains?.[0];
-  const domOk = dom && dom.name && dom.flags && dom.groups.length >= 2 && dom.imbalance_pct > 0;
+  const domOk = dom && dom.name && dom.flags && dom.groups.length >= 2 && dom.imbalance_pct > 0
+    && dom.balancer >= 1 && dom.balancer <= cpus && dom.next_balance_in <= 1000;   // a CPU of the machine, and a countdown in ticks, not a wrapped one
   await cmd('exit');
   // the page's default machine resumes from a snapshot: it must answer too, with the same driver
   if (fs.existsSync(path.join(image, 'snap-5.json'))) {

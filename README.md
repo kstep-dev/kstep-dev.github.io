@@ -21,7 +21,7 @@ Upstream QEMU can target wasm64 too but only with the TCI interpreter, about 4x 
 | `setup.sh` | one-time: `setup` (apt, emsdk, meson), `deps` (zlib, libffi, pixman, glib for wasm64), `qemu` (aarch64-softmmu, virt machine only, into `site/qemu/`) |
 | `kstep viz` (in the parent repo: `../kstep.sh viz`) | builds the site: compiles `crates/core` for wasm32 into `site/kstep_core.js` + `kstep_core_bg.wasm`, writes `site/data.json` (version stamp and the bug catalog from `bugs.yaml`) and rebuilds and copies a playground image per supported LTS kernel (kSTEP's `build/v5.15` .. `build/v6.18`, arm64, with the current kmod and user.c, checked out and built on first run) into `site/images/<kernel>/` and snapshots each at the driver's ready line for the page's default machine (`run.mjs --snapshot`: `snap-5.bin.gz`, ~3 MB, resumed in ~0.3 s instead of a ~4 s boot; an image that did not change keeps its snapshot; layouts over 4 CPUs boot cold). That is `kstep viz build`; plain `kstep viz [--port N]` builds the same way first, incrementally, then serves `site/` locally, and `kstep viz serve` only serves (page edits show on a reload), and `kstep viz deploy` builds, gates on `pagetest.mjs` and `run.mjs --check` and force-pushes `site/` as the orphan `gh-pages` branch. Needs `rustup target add wasm32-unknown-unknown` and `cargo install wasm-bindgen-cli` at the version in `Cargo.lock` |
 | `run.mjs` | the playground headless under Node (>= 20): the round-robin demo (who ran on which CPU), `--bench <s>` for `tick`/`top` latency, `--check` to verify the staged image answers every verb the page uses and its snapshot resumes (the deploy gate), `--snapshot` to write the snapshot for `--smp` (default 5) next to `--image`; a run resumes from the image's snapshot when there is one, `--cold` boots regardless |
-| `site/index.html` | the front page: the playground, which boots a kernel with the `cli` driver on a configurable machine (sockets × clusters × cores × threads, per-core capacity), creates tasks and ticks the scheduler; a stack of uPlot figures over the same ticks (one toggle per figure, grouped per task and per CPU, the set living in `?charts=`) sharing one window, one zoom and one crosshair, with Placement -- a row per CPU, shared out among the tasks on it -- shown by default, and a table of each task's counters with nice, affinity, pause/wake and kill controls; then the Workload (tasks and cgroups), the Scheduler (each CPU's queues, one block per class) and the Machine (CPU statistics and sched domains), with a folded Topology editor above the charts |
+| `site/index.html` | the front page: the playground, which boots a kernel with the `cli` driver on a configurable machine (sockets × clusters × cores × threads, per-core capacity), creates tasks and ticks the scheduler; a stack of uPlot figures over the same ticks (one toggle per figure, grouped per task and per CPU, the set living in `?charts=`) sharing one window, one zoom and one crosshair, with Placement -- a row per CPU, shared out among the tasks on it -- shown by default; then the Workload (tasks and cgroups as an outline, with policy, nice or priority, affinity and cgroup controls per task), the Scheduler (a box per CPU with its class queues), the Load balancer (the sched domains as nested boxes down to the CPUs, one running bar each coloured by the balancer's class, the balance countdowns and a log of what moved) and the Topology editor; a control bar under the scenarios holds the kernel selector, the clock and the kernel's status |
 
 `KSTEP_DIR` is the kSTEP checkout for `run.mjs`; it defaults to `..` (this repo as kSTEP's
 `website` submodule). Everything else generated lives in `build/`.
@@ -78,14 +78,20 @@ Older images show unavailable counters rather than inferred runqueue values;
 The Charts section is the run: one column per tick, the window set by the wheel (pan) and the
 column width (ctrl or cmd wheel to zoom), and every figure handed that same window so a column
 cannot drift between two of them. Figures plot the kernel's own values, so the axis means what the
-Tasks and CPUs tables mean. Placement is the default: a row per CPU, shared out at each tick among
-the tasks on that CPU, solid for the one that ran and faint for those queued behind it.
+Workload table and the Load balancer's bars mean. Placement is the default: a row per CPU, shared
+out at each tick among the tasks on that CPU, solid for the one that ran and faint for those
+queued behind it.
 
-The Topology editor starts folded above the charts. It is a draft: presets, dimensions, and per-core capacities do
-not affect the running session until Restart. Discard restores the running
-configuration. Layouts have at most eight experiment CPUs, plus CPU 0 for the
-driver. Restart stores the configuration in the URL and resets the experiment.
+The Scheduler section is a box per CPU: what runs there, then the real-time and fair queues with
+something on them, the fair one as an outline of cgroup entities and tasks with the kernel's own
+eligibility, pick and lag. The Load balancer section is the sched domain tree the kernel built,
+one box per span down to CPU cards, each with one bar -- running time over capacity, coloured by
+the balancer's class of that group (has spare, fully busy, overloaded) -- and a countdown to its
+next balance; contention and load are on the bar's hover, a level's flags and knobs on its name.
+Under it, up to five lines of what moved: the balances that ran and the migrations, per command.
 
-The status bar above Topology shows startup progress, elapsed time, and the latest
-kernel console line. Once ready, the preview disappears. Expand Show logs for the
-kernel console and kSTEP trace; errors expand the logs automatically.
+The Topology editor at the bottom is a draft: threads, cores, clusters, sockets and per-core
+capacities do not affect the running session until Restart, which stores the machine in the URL
+and reboots. Layouts of up to four CPUs resume the staged snapshot; larger ones boot cold. The
+control bar under the scenarios has the kernel selector (one image per supported LTS kernel), the
+clock and, at its right, the kernel's status with the log toggle.

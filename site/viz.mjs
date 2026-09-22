@@ -232,7 +232,7 @@ function drawRows(u2) {
 // The series for the current metric: [key, label, colour], a line each.
 const seriesOf = (fig) => fig.domain === 'task'
   ? tasks.map(t => [t.id, String(t.id), colorOf(t.id)])
-  : Array.from({ length: ncpus }, (_, i) => [i + 1, `cpu${i + 1}`, `hsl(${(i * 97) % 360}, 45%, 45%)`]);
+  : Array.from({ length: ncpus }, (_, i) => [i + 1, `cpu ${i + 1}`, `hsl(${(i * 97) % 360}, 45%, 45%)`]);
 // The metric for one series at one tick; undefined where there is no record, which draws a gap.
 // Values are the kernel's own, not offsets from anything: the axis then means what the Tasks and
 // CPUs tables mean, and a number does not change because the window was scrolled.
@@ -247,7 +247,7 @@ function sample(fig, key, tick) {
 // explanation and the rest are not offered. Adding a figure is an entry here, and nothing else.
 const FIGURES = {
   placement: { title: 'Placement', domain: 'task', get: (r) => r.cpu, integer: true, invert: true, lanes: true,
-    note: 'each CPU\u2019s row shared out among the tasks on it at that tick, in their own colours: solid is the one that ran, faint the ones queued behind it' },
+    note: 'one row per CPU, split among its tasks each tick: solid ran, faint waited' },
   cputime:   { title: 'cpu time', domain: 'task', get: (r) => NS(r.sum_exec_runtime),
     note: 'slope is that task’s share of the machine: parallel lines are an even split, a fan is a weighted one, a flat line is a task getting nothing' },
   // fair-class metrics read the task's fair record, so a task under fifo or rr draws a gap
@@ -494,13 +494,13 @@ const c0 = (cores) => cores.at(-1) ?? core();
 function coreBox(c, cores, oi, si, ci, room, lastCore) {
   const el = document.createElement('div'); el.className = 'core';
   const h = document.createElement('header');
-  h.append(boxName('core'));
+  h.append(boxName('core'), addBtn('+ thread', 'Add a thread to this core: one more CPU', () => { c.threads++; renderLayout(); }));
   if (!lastCore) h.append(binBtn('Remove this core', () => { draft.sockets[si][ci].splice(oi, 1); renderLayout(); }));
   el.append(h);
-  // Two numbers rather than a chip per thread. "cpu capacity" is the kernel's own term
-  // (arch_scale_cpu_capacity) and says which it is: per CPU, not the core's total, so each of a
-  // core's threads gets this value -- which is what CAP takes. Edits go through
-  // refreshLayout, not renderLayout, so a box is not rebuilt under the cursor mid-type.
+  // "cpu capacity" is the kernel's own term (arch_scale_cpu_capacity) and says which it is: per
+  // CPU, not the core's total, so each of a core's threads gets this value -- which is what CAP
+  // takes. Edits go through refreshLayout, not renderLayout, so a box is not rebuilt under the
+  // cursor mid-type.
   const field = (label, opts, get, set) => {
     const row = document.createElement('div'); row.className = 'caprow';
     const lbl = document.createElement('span'); lbl.textContent = label;
@@ -508,7 +508,7 @@ function coreBox(c, cores, oi, si, ci, room, lastCore) {
     inp.type = 'number'; inp.className = 'capnum';
     Object.assign(inp, opts);
     inp.value = get();
-    inp.setAttribute('aria-label', `${label} of the core on cpu${coreCpus(draft, si, ci, oi)[0] ?? '?'}`);
+    inp.setAttribute('aria-label', `${label} of the core on cpu ${coreCpus(draft, si, ci, oi)[0] ?? '?'}`);
     // A number outside the range is simply not taken: the model keeps its last good value, the
     // box is marked until it reads one again, and leaving the field puts the good value back. So
     // a half-typed or empty field never makes the machine invalid, and 0 never reaches it.
@@ -520,14 +520,16 @@ function coreBox(c, cores, oi, si, ci, room, lastCore) {
     };
     inp.onblur = () => { inp.value = get(); inp.classList.remove('bad'); refreshLayout(); };
     row.append(lbl, inp);
-    el.append(row);
+    return row;
   };
-  field('threads', { min: 1, max: MAX_CPUS, step: 1 }, () => c.threads, (v) => { c.threads = v; });
-  field('cpu capacity', { min: 1, max: 1024, step: 128 }, () => c.cap ?? 1024, (v) => { c.cap = v; });
-  // which CPUs these threads will be: what ties this box to the CPUs table and to a cpulist
-  const cpus = document.createElement('div');
+  // One line: the threads as the CPUs they will be -- one chip each, removable while the core
+  // keeps one; the numbers follow the tree, as the kernel's do, so refreshLayout writes them --
+  // then the capacity every one of them gets.
+  const line = document.createElement('div'); line.className = 'cpuline';
+  const cpus = document.createElement('span');
   cpus.className = 'corecpus'; cpus.dataset.si = si; cpus.dataset.ci = ci; cpus.dataset.oi = oi;
-  el.append(cpus);
+  line.append(cpus, field('capacity', { min: 1, max: 1024, step: 128 }, () => c.cap ?? 1024, (v) => { c.cap = v; }));
+  el.append(line);
   return el;
 }
 
@@ -536,13 +538,17 @@ function refreshLayout() {
   draft.ids = null;   // the counts changed, so the cached CPU map is stale
   const count = nCpus(draft);
   for (const el of $('cpu-layout').querySelectorAll('.corecpus')) {
-    const list = coreCpus(draft, +el.dataset.si, +el.dataset.ci, +el.dataset.oi);
-    el.textContent = list.length ? `cpu ${list.length > 1 ? `${list[0]}-${list.at(-1)}` : list[0]}` : '';
+    const si = +el.dataset.si, ci = +el.dataset.ci, oi = +el.dataset.oi, c = draft.sockets[si][ci][oi];
+    const list = coreCpus(draft, si, ci, oi);
+    el.replaceChildren(...list.map((cpu) => {
+      const chip = document.createElement('span'); chip.className = 'thread'; chip.textContent = `cpu ${cpu}`;
+      if (list.length > 1) chip.append(binBtn(`Remove this thread, cpu ${cpu}`, () => { c.threads--; renderLayout(); }));
+      return chip;
+    }));
   }
+  for (const b of $('cpu-layout').querySelectorAll('.core > header > button.act:not(.rm)')) b.disabled = count >= MAX_CPUS;   // + thread, while the machine has room
   const badCap = allCores(draft).some(c => !(c.cap >= 1 && c.cap <= 1024));
-  const badThreads = allCores(draft).some(c => !(c.threads >= 1));
-  const error = badThreads ? 'A core needs at least one thread.'
-              : badCap ? 'A core\u2019s capacity is 1 to 1024, where 1024 is a full CPU.'
+  const error = badCap ? 'A core\u2019s capacity is 1 to 1024, where 1024 is a full CPU.'
               : count < 1 ? 'A machine needs at least one core.'
               : count > MAX_CPUS ? `That is ${count} CPUs; the shared region reports at most ${MAX_CPUS} (KSTEP_SHM_CPUS).` : '';
   $('cpu-hint').textContent = error;
@@ -568,67 +574,15 @@ function setCpuDraft(m) {
 // Frequency is the one per-CPU scale that moves while the machine runs, as cpufreq does to it, so
 // it is a live control here; capacity is what the hardware is and belongs to the machine form
 // (CAP in the cpu-topo line). One driver line per CPU changed: `cpu-freq <cpu> <scale>`.
-const SCALES = [1024, 768, 512, 256, 128];
-const FREQ = 1;   // the one hardware number that moves while it runs, so the only one here
-const cellSelect = (cpu, col) => $('cpu-stats').tBodies[0].rows[cpu - 1]?.cells[col].firstChild;
-function scaleSelect(cpu, col) {
-  const verb = 'cpu-freq';
-  const el = document.createElement('select');
-  el.title = `Frequency of cpu${cpu}`; el.setAttribute('aria-label', el.title);
-  el.append(...SCALES.map(v => new Option(v, v)));
-  el.value = 1024;
-  el.onchange = () => {
-    el.dataset.pending = '1';
-    enqueue(async () => {
-      const r = await cmd(`${verb} ${cpu} ${el.value}`);
-      delete el.dataset.pending;
-      if (r.error) el.blur();   // sync() leaves a focused control alone, and the refresh puts the kernel's value back
-    });
-  };
+const FREQ = 1;   // the frequency column of a CPU's row: the one hardware number that moves while it runs
+// The frequency of one CPU as a number box, 1..1024 with 1024 the full CPU, sent as one cpu-freq
+// line; the kernel's value flows back through sync, so a driver line shows up.
+function freqBox(cpu) {
+  const el = document.createElement('input');
+  el.type = 'number'; el.min = 1; el.max = 1024; el.step = 1; el.value = 1024; el.className = 'capnum';
+  el.title = `Frequency of cpu ${cpu}, 1..1024: the scale the fair class's averages accrue at`; el.setAttribute('aria-label', el.title);
+  onSet(el, `cpu-freq ${cpu}`);
   return el;
-}
-// The kernel's value, which a scenario's driver line can set to any scale in 1..1024: show one the
-// list does not have rather than leaving the control blank.
-function scaleSync(el, v) {
-  if (v !== undefined && !SCALES.includes(v) && !Array.from(el.options).some(o => +o.value === v))
-    el.add(new Option(v, v), Array.from(el.options).findIndex(o => +o.value < v));
-  sync(el, v);
-}
-function renderCpus() {
-  const cores = allCores(machine).length;
-  const clusters = machine.sockets.reduce((n, cl) => n + cl.length, 0);
-  const sockets = machine.sockets.length;
-  $('running-cpus').textContent = `${plural(ncpus, 'CPU')} · ${plural(cores, 'core')}`
-    + (clusters > 1 ? ` · ${plural(clusters, 'cluster')}` : '')
-    + (sockets > 1 ? ` · ${plural(sockets, 'socket')}` : '');
-  for (let cpu = 1; cpu <= ncpus; cpu++) {
-    const r = cpuRecords.get(cpu);
-    const tb = $('cpu-stats').tBodies[0];
-    let tr = tb.rows[cpu - 1];
-    if (!tr) {
-      tr = tb.insertRow();
-      for (let i = 0; i < 10; i++) tr.insertCell();   // one per <th> in the head
-      tr.cells[0].textContent = `cpu${cpu}`;
-      tr.cells[FREQ].append(scaleSelect(cpu, FREQ));
-    }
-    scaleSync(tr.cells[FREQ].firstChild, r?.freq);   // the kernel's value, so a driver line shows up
-    // The balancer's own count, and the runqueue's raw depth after it when the two disagree --
-    // which is the whole reason to have both: what is on the queue and not in the balancer's
-    // number is a real-time or deadline task, or one the delayed dequeue has yet to let go.
-    const f = r?.fair;   // the fair class's root queue on this CPU: its numbers, not the runqueue's
-    const runnable = f?.h_nr_runnable === undefined ? '—'
-      : r.nr_running === f.h_nr_runnable ? f.h_nr_runnable : `${f.h_nr_runnable} (${r.nr_running} queued)`;
-    const values = [
-      !r ? '—' : r.idle ? 'idle' : r.current ? r.current : 'system task',
-      f?.util_avg ?? '—', f?.load_avg ?? '—', f?.runnable_avg ?? '—',
-      f?.min_vruntime === undefined ? '—' : ms(f.min_vruntime), r?.nr_switches ?? '—',
-      runnable,
-      r?.next_balance_in === undefined ? '—' : r.next_balance_in === 0 ? 'due' : r.next_balance_in];
-    values.forEach((v, i) => {   // as renderTask does: an unchanged cell is not touched
-      const cell = tr.cells[i + FREQ + 1], text = String(v);
-      if (cell.textContent !== text) cell.textContent = text;
-    });
-  }
 }
 // ---- sched domains: the hierarchy the kernel built, which is not always the one asked for ----
 // Every CPU in a domain's span has its own copy of it, and they agree on everything the structure
@@ -648,73 +602,166 @@ const cpulist = (mask) => {   // 0b1110 -> "1-3"
   return out.join(',') || '—';
 };
 const lowestCpu = (mask) => { for (let c = 0; c < MAX_CPUS + 1; c++) if (mask >> c & 1) return c; return 99; };
-function renderDomains() {
-  const tb = $('domain-table').tBodies[0];
-  // Records arrive grouped by CPU, innermost first, so a CPU's running count is the level's depth;
-  // rows are then ordered innermost level first, and by span within a level.
-  const seen = new Map();   // "LEVEL span" -> the first CPU's copy, which is the whole structure
+// A utilization bar: the fill is util over capacity, the number beside it; red past the capacity,
+// which on an asymmetric level is what misfit looks for.
+// The bar also carries the balancer's class of what it measures: the word inside the track and
+// the fill in that class's colour, since the class is a reading of this very ratio.
+const bold = (v) => { const el = document.createElement('b'); el.textContent = v; return el; };
+const CLASS_TITLE = 'how the balancer one level up classes this group (group_classify), from its sums against its capacity with the level\u2019s imbalance_pct as the margin: overloaded when it holds more runnable tasks than CPUs and its utilization or runnable demand exceeds its capacity; has spare when a CPU is idle or the demand clears the margin below capacity; fully busy between. A busier class always beats a less busy one as the busiest group; load decides only within a class. Misfit, imbalanced and asym packing are not shown: they need per-task load, affinity failures and CPU priorities the region does not carry';
+// One bar per box: running, the time the fair tasks were on the CPU (PELT util_avg), over the
+// capacity, in the colour of the balancer's class of the group -- green has spare, orange fully
+// busy, red overloaded. The other two PELT sums are on hover: contention, time on the queue
+// running or waiting (runnable_avg), and load, contention weighted by nice (load_avg), the figure
+// the balancer compares between siblings.
+function bar() {
+  const el = document.createElement('span'); el.className = 'bar';
+  const track = document.createElement('span'); track.className = 'track';
+  const fill = document.createElement('span'); fill.className = 'fill';
+  const num = document.createElement('span'); num.className = 'num';
+  track.append(fill, num);
+  el.append(track);
+  el.update = ({ util, runnable, load }, capacity, cls) => {
+    fill.style.width = `${capacity ? Math.min(100, 100 * util / capacity) : 0}%`;
+    num.textContent = `${util} / ${capacity}`;
+    el.dataset.cls = cls ?? '';
+    el.title = `running ${util} of capacity ${capacity}, 1024 being one CPU at full speed: time the fair tasks were on the CPU (PELT util_avg). Contention ${runnable}: time they were on the queue, running or waiting (runnable_avg); above running is tasks waiting. Load ${load}: contention weighted by nice (load_avg), what the balancer compares between siblings.${cls ? ` The colour is the balancer\u2019s class of this group, ${cls}: ` + CLASS_TITLE : ''}`;
+  };
+  return el;
+}
+
+// One CPU at a leaf of the tree, as a card: the frequency knob, since it scales how fast the
+// averages accrue, the utilization bar across the card, then the rest of what the balancer reads there. Built once
+// with the tree and updated in place, so the knob is not rebuilt under an open menu.
+function cpuRow(cpu, capacity, pct, parent) {
+  const row = document.createElement('div'); row.className = 'cpu-row';
+  const name = document.createElement('span'); name.className = 'cpu'; name.textContent = `cpu ${cpu}`;
+  const knob = freqBox(cpu);
+  const freq = document.createElement('label'); freq.className = 'freq'; freq.append('freq ', knob);
+  const util = bar();
+  // the task count, as a group's header has it: the balancer's own count, and the runqueue's raw
+  // depth after a plus when the two disagree, since what is queued but not in the balancer's
+  // number is a real-time task, or one delayed dequeue has yet to let go
+  const ntasks = document.createElement('span'); ntasks.className = 'stat';
+  ntasks.title = 'cfs_rq h_nr_runnable: runnable tasks as the load balancer counts them, the number it evens out. When the runqueue holds more -- a real-time task, or one left queued by delayed dequeue -- the extra follow after a plus';
+  const count = document.createElement('b'), unit = document.createTextNode(' tasks'); ntasks.append(count, unit);
+  const hot = document.createElement('span'); hot.className = 'hot';
+  const when = document.createElement('span'); when.className = 'stat when';
+  when.title = 'ticks until this CPU, as a group of one at the level above, is next balanced against its siblings there. Due means the interval is up and the balance runs at the next tick; it can stay due while another CPU balances the levels below, which stops this CPU\u2019s walk up the levels';
+  // three lines: who, its knob and its task count, as a group's header reads; the bars across the
+  // card, carrying the balancer's class; then the failure badge and, at the right, the countdown
+  const top = document.createElement('div'); top.className = 'line'; top.append(name, freq, ntasks);
+  const bottom = document.createElement('div'); bottom.className = 'line'; bottom.append(hot, when);
+  row.append(top, util, bottom);
+  row.update = () => {
+    const r = cpuRecords.get(cpu), f = r?.fair;
+    sync(knob, r?.freq);   // the kernel's value, so a driver line shows up
+    if (!r || !f) return;
+    util.update({ util: f.util_avg, runnable: f.runnable_avg, load: f.load_avg }, r.capacity, capacity === undefined ? undefined : cpuRow.classify(cpu, capacity, pct));
+    count.textContent = r.nr_running === f.h_nr_runnable ? `${f.h_nr_runnable}` : `${f.h_nr_runnable}+${r.nr_running - f.h_nr_runnable}`;
+    unit.textContent = f.h_nr_runnable === 1 && r.nr_running === 1 ? ' task' : ' tasks';
+    row.classList.toggle('pulled', lastMoves.pulled.has(cpu));   // this CPU ran the balancer on the last command
+    const mine = parent && domains.find((x) => x.name === parent.name && x.cpu === cpu);
+    when.replaceChildren(...(mine ? ['balance ', ...(mine.next_balance_in === 0 ? [bold('due')] : ['in ', bold(mine.next_balance_in)])] : []));
+    // failures escalate to active balancing past cache_nice_tries + 2: the one piece of balance
+    // history worth showing, and only once it is there
+    const failing = domains.filter((d) => d.cpu === cpu && d.nr_balance_failed > d.cache_nice_tries + 2);
+    hot.textContent = failing.map((d) => `${d.nr_balance_failed} failed at ${d.name}`).join(', ');
+    hot.title = failing.map((d) => `${d.nr_balance_failed} balance attempts at ${d.name} failed in a row, past the ${d.cache_nice_tries + 2} the kernel escalates at: the next one may push the running task off`).join('\n');
+  };
+  return row;
+}
+// The sched domains as one tree. Every CPU in a span has its own copy of the domain, agreeing on
+// span, groups, flags and knobs, so one copy per distinct (level, span) is the structure; the
+// widest span is the root and a domain's groups are the spans of the domains one level down, or
+// single CPUs at the leaves. Each box shows its utilization over capacity -- the sum the balancer
+// makes over its CPUs, against the kernel's group capacity -- so at every level the busiest
+// sibling is the longest bar.
+let balancerKey = '', balancerNodes = [];   // the tree built, and every node's update
+function renderBalancer() {
+  const seen = new Map();   // "LEVEL span" -> the first CPU's copy, with the level's depth
   const depth = new Map();
   for (const d of domains) {
     const n = (depth.get(d.cpu) ?? -1) + 1, key = `${d.name} ${d.span}`;
     depth.set(d.cpu, n);
-    // the structure is shared, but each CPU balances on its own schedule: keep them all
-    if (!seen.has(key)) seen.set(key, { ...d, depth: n, per: [] });
-    seen.get(key).per.push(d);
+    if (!seen.has(key)) seen.set(key, { ...d, depth: n });
   }
-  const rows = [...seen.values()].sort((a, b) => a.depth - b.depth || lowestCpu(a.span) - lowestCpu(b.span));
-  // Most SD_* flags are on every level -- six of seven, typically -- so they say nothing about any
-  // one of them. Only the flags that tell a level apart are worth a chip; the rest go on hover.
-  // ASYM_* is always shown, because a machine where every level is asymmetric is the interesting
-  // case, not a reason to hide it.
-  const sets = rows.map((d) => new Set(d.flags ? d.flags.split(', ') : []));
-  const common = sets.length ? [...sets[0]].filter((f) => sets.every((g) => g.has(f))) : [];
-  tb.replaceChildren();
-  for (const d of rows) {
-    const tr = tb.insertRow();
-    const lvl = tr.insertCell();
-    lvl.innerHTML = `<span class="lvl">${d.name}</span>`;
-    // the knobs are the level's, set when the domain was built and fixed from then on, so they
-    // belong to the name rather than to a column that would read the same on every tick
-    lvl.title = `interval ${d.balance_interval} ticks, imbalance_pct ${d.imbalance_pct}, `
-      + `busy_factor ${d.busy_factor}, cache_nice_tries ${d.cache_nice_tries}`;
-    tr.insertCell().innerHTML = `<span class="span">${cpulist(d.span)}</span>`;
-    const gs = tr.insertCell();
+  const all = [...seen.values()];
+  // the same structure as last time: the numbers move, the boxes stay, and an open menu with them
+  const key = `${ncpus}|${all.map((d) => `${d.name} ${d.span} ${d.flags}`).join(';')}`;
+  if (key === balancerKey) { for (const n of balancerNodes) n.update(); return; }
+  balancerKey = key; balancerNodes = [];
+  const cpusOf = (span) => Array.from({ length: ncpus }, (_, i) => i + 1).filter((c) => span >> c & 1);
+  const sumOf = (span, get) => cpusOf(span).reduce((u, c) => u + (get(cpuRecords.get(c)) ?? 0), 0);
+  const utilOf = (span) => sumOf(span, (r) => r?.fair?.util_avg);
+  const tasksOf = (span) => sumOf(span, (r) => r?.fair?.h_nr_runnable);
+  // The kernel's classification of a group, as its parent level's balancer makes it
+  // (group_classify: group_is_overloaded and group_has_capacity in fair.c), from the sums over the
+  // group's CPUs against its capacity, with the level's imbalance_pct as the margin. Of the
+  // kernel's seven classes the three here are the ones these sums decide; misfit, imbalanced and
+  // asym packing read per-task load, affinity failures and CPU priorities the region does not carry.
+  const classify = (span, capacity, pct) => {
+    const n = tasksOf(span), weight = cpusOf(span).length;
+    const util = utilOf(span), runnable = sumOf(span, (r) => r?.fair?.runnable_avg);
+    const overloaded = n > weight && (capacity * 100 < util * pct || capacity * pct < runnable * 100);
+    if (overloaded) return 'overloaded';
+    const spare = n < weight || (!(capacity * pct < runnable * 100) && capacity * 100 > util * pct);
+    return spare ? 'has spare' : 'fully busy';
+  };
+  const idleOf = (span) => cpusOf(span).filter((c) => cpuRecords.get(c)?.idle).length;
+  // a domain's box: header, then its groups side by side, each the box of the domain one level
+  // down with that span, or a CPU's row
+  const boxOf = (d, capacity, pct, parent) => {
+    const box = document.createElement('div'); box.className = 'dom';
+    const head = document.createElement('header');
+    // The box is named for what its span is -- a core, a cluster, a socket; the kernel's level name,
+    // what a boot log or the source calls it, is on hover. A level exists only where its span adds
+    // something, so a core's level is gone on single-thread cores.
+    const LEVELS = { SMT: ['core', 'the threads of a core'], CLS: ['cluster', 'the cores of a cluster'], MC: ['socket', 'the cores of a socket, sharing its last-level cache'],
+                     PKG: ['socket', 'a socket, kept when there are several'], DIE: ['socket', 'a socket, kept when there are several'], NODE: ['node', 'a NUMA node'] };
+    const [word, what] = LEVELS[d.name] ?? [d.name.toLowerCase(), 'a topology level'];
+    const lvl = document.createElement('span'); lvl.className = 'lvl'; lvl.textContent = word;
+    lvl.title = `${d.name}: ${what}\ninterval ${d.balance_interval} ticks, imbalance_pct ${d.imbalance_pct}, busy_factor ${d.busy_factor}, cache_nice_tries ${d.cache_nice_tries}`
+      + (d.flags ? `\nflags: ${d.flags}` : '');
+    const span = document.createElement('span'); span.className = 'span'; span.textContent = cpulist(d.span);
+    head.append(lvl, span);
+    const cap = capacity ?? d.groups.reduce((c, g) => c + g.capacity, 0);
+    const util = bar();
+    const n = document.createElement('span'); n.className = 'stat';
+    const when = document.createElement('span'); when.className = 'stat when';
+    when.title = 'ticks until this group is next balanced against its siblings: the level\u2019s interval since its last balance, busy_factor times longer while the balancing CPU is busy. The CPU that runs it is the group\u2019s first idle one -- on an idle core, above the SMT level -- or its first CPU when none is idle. Due means the interval is up; the balance runs at that CPU\u2019s next tick, and can stay due for a while when another CPU is the balancer at a level below, since the tick\u2019s walk up the levels stops there. The log below records the balances that actually ran';
+    head.append(n);
+    const foot = document.createElement('footer'); foot.append(when);   // when this level next weighs its groups
+    balancerNodes.push({ update: () => {
+      util.update({ util: utilOf(d.span), runnable: sumOf(d.span, (r) => r?.fair?.runnable_avg), load: sumOf(d.span, (r) => r?.fair?.load_avg) }, cap, classify(d.span, cap, pct ?? d.imbalance_pct));
+      const idle = idleOf(d.span), nt = tasksOf(d.span);
+      n.replaceChildren(bold(nt), nt === 1 ? ' task' : ' tasks', ...(idle ? [', ', bold(idle), ' idle'] : []));
+      // the parent level's record for a CPU of this group names the CPU that balances it, and that
+      // CPU's record has the countdown
+      const any = parent && domains.find((y) => y.name === parent.name && (d.span >> y.cpu & 1));
+      const rec = any && domains.find((x) => x.name === parent.name && x.cpu === any.balancer);
+      when.replaceChildren(...(rec ? ['balance ', ...(rec.next_balance_in === 0 ? [bold('due')] : ['in ', bold(rec.next_balance_in)])] : []));
+    } });
+    const kids = document.createElement('div'); kids.className = 'kids';
     for (const g of [...d.groups].sort((a, b) => lowestCpu(a.span) - lowestCpu(b.span))) {
-      const el = document.createElement('span'); el.className = 'sg';
-      // min/max only when the group is not uniform: that asymmetry is what misfit looks at
-      const range = g.min_capacity === g.max_capacity ? '' : ` (${g.min_capacity}–${g.max_capacity})`;
-      el.innerHTML = `<b>${cpulist(g.span)}</b> <i>${g.capacity}${range}</i>`;
-      el.title = `Group of ${plural(g.weight, 'CPU')}: total capacity ${g.capacity}, per-CPU ${g.min_capacity}–${g.max_capacity}`;
-      gs.append(el);
+      const child = all.filter((c) => c.span === g.span && c.depth < d.depth).sort((a, b) => b.depth - a.depth)[0];
+      if (child) kids.append(boxOf(child, g.capacity, d.imbalance_pct, d));
+      else { const row = cpuRow(lowestCpu(g.span), g.capacity, d.imbalance_pct, d); balancerNodes.push(row); kids.append(row); }
     }
-    const fl = tr.insertCell();
-    const all = d.flags ? d.flags.split(', ') : [];
-    const own = all.filter((f) => f.startsWith('ASYM') || !common.includes(f));
-    for (const f of own) {
-      const el = document.createElement('span');
-      el.className = f.startsWith('ASYM') ? 'flag asym' : 'flag';   // asymmetry is the one worth spotting
-      el.textContent = f; fl.append(el);
-    }
-    if (!own.length) { fl.className = 'num'; fl.textContent = '\u2014'; }
-    fl.title = all.length ? `${d.name}: ${all.join(', ')}` + (common.length ? `\n\nOn every level here: ${common.join(', ')}` : '') : '';
-    // How long ago this level last balanced and -- only when there are any -- how many attempts
-    // failed: the two that move. The interval that sets the pace is the level's, not the tick's,
-    // so it is read off the level's name; the per-CPU spread goes on hover.
-    const each = (f) => d.per.map(p => `cpu${p.cpu}: ${f(p)}`).join('\n');
-    const ago = Math.min(...d.per.map(p => p.last_balance_ago));
-    const failed = Math.max(...d.per.map(p => p.nr_balance_failed));
-    const bal = tr.insertCell(); bal.className = 'num';
-    bal.textContent = `${ago} ticks ago` + (failed ? `, ${failed} failed` : '');
-    // the threshold the kernel escalates at, so a row on the edge of active balancing stands out
-    if (failed > d.cache_nice_tries + 2) bal.classList.add('hot');
-    bal.title = each(p => `${p.last_balance_ago} ticks ago, ${p.nr_balance_failed} failed`)
-      + `\n\nactive balancing past ${d.cache_nice_tries + 2} failures`;
-  }
+    if ([...kids.children].every((k) => k.classList.contains('cpu-row'))) kids.classList.add('cpus');   // a level of CPUs: cards side by side
+    box.append(head, util, kids, foot);   // the bar on a line of its own, above what it sums, as a CPU's card has it
+    return box;
+  };
+  const top = all.filter((d) => d.depth === Math.max(...all.map((d) => d.depth))).sort((a, b) => lowestCpu(a.span) - lowestCpu(b.span));
+  // no domains at all -- one test CPU -- and the CPUs still have their rows
+  cpuRow.classify = (cpu, capacity, pct) => classify(1 << cpu, capacity, pct);
+  const rows = () => Array.from({ length: ncpus }, (_, i) => { const row = cpuRow(i + 1); balancerNodes.push(row); return row; });
+  $('balancer').replaceChildren(...(top.length ? top.map((d) => boxOf(d)) : rows()));
+  if (!top.length) $('balancer').classList.add('cpus'); else $('balancer').classList.remove('cpus');
+  for (const n of balancerNodes) n.update();
   // The levels asked for that the kernel collapsed away: the page knows what it sent.
-  const built = new Set(rows.map(d => d.name));
+  const built = new Set(all.map(d => d.name));
   const gone = topoLevels(topoLine?.slice(9) ?? '').filter(l => !built.has(l));
-  $('domains-collapsed').textContent = !domains.length ? ''
-    : gone.length ? `Collapsed as redundant: ${gone.join(', ')}.` : '';
+  $('domains-collapsed').textContent = !domains.length ? '' : gone.length ? `Collapsed as redundant: ${gone.join(', ')}.` : '';
 }
 
 // The machine reaches the kernel as one cli command, sent once the driver is ready: the topology,
@@ -783,7 +830,7 @@ const scriptWith = (script, m) => [...cpuSetup(m), ...script.filter(l => !MACHIN
 
 // ---- task table: rows are created once and updated in place (no rebuild, no flicker) ----
 const rowOf = new Map();
-const CG = 1, STATE = 2, CPU = 3, AFF = 4, TIME = 5, POL = 6, NICE = 7, WEIGHT = 8, ACT = 9, NCOLS = 10;   // where the task is and what it got, then its class, parameter and the weight that follows
+const CG = 1, STATE = 2, AFF = 3, CPU = 4, TIME = 5, SCHED = 6, ACT = 7, NCOLS = 8;   // where the task may run and is, what it got, then its policy with the parameter that policy reads, in one cell as sched_setattr takes them
 const AFF_TITLE = 'CPUs the task may run on';
 // A row's controls are inputs and views at once: the user types into them, but the same
 // settings get changed behind their back -- a scenario's setup script sends driver lines
@@ -841,10 +888,10 @@ const onSet = (el, verb, tail = '') => el.onchange = () => {
 // because "this knob does nothing here" is the thing the table is there to say.
 function setParam(tr, policy) {
   if (policy === undefined) return;
-  const [nice, prio] = tr.cells[NICE].children;
+  const [, niceL, prioL] = tr.cells[SCHED].children, nice = niceL.lastElementChild;
   const rt = policy === 'fifo' || policy === 'rr';
-  nice.hidden = rt;
-  prio.hidden = !rt;
+  niceL.hidden = rt;
+  prioL.hidden = !rt;
   // under SCHED_IDLE the nice is kept but not read, so it stays settable, as the kernel has it, and
   // is drawn inert rather than disabled: what it says is "this knob does nothing here"
   nice.classList.toggle('inert', policy === 'idle');
@@ -878,7 +925,7 @@ function renderTask(t) {
     const nice = document.createElement('input'); nice.type = 'number'; nice.min = -20; nice.max = 19; nice.value = 0; nice.style.width = '2.9rem';
     // each parameter is set together with the class that reads it, as sched_setattr takes them:
     // the row's current policy goes with the new value
-    const setParamWith = (el, verb) => el.onchange = () => { const pol = tr.cells[POL].firstElementChild.value; el.dataset.pending = '1';
+    const setParamWith = (el, verb) => el.onchange = () => { const pol = tr.cells[SCHED].firstElementChild.value; el.dataset.pending = '1';
       enqueue(async () => { const r = await cmd(`${verb} ${t.id} ${pol} ${el.value}`); delete el.dataset.pending; if (r.error) el.blur(); }); };
     setParamWith(nice, 'policy-fair');
     const prio = document.createElement('input'); prio.type = 'number'; prio.min = 1; prio.max = 99; prio.value = 80; prio.style.width = '2.9rem';
@@ -886,7 +933,9 @@ function renderTask(t) {
       + 'and any of them outranks every fair task. The kernel sets it together with the policy, so picking fifo or rr sends this value. '
       + 'The task\u2019s nice is kept meanwhile and comes back into force when it returns to a fair policy.';
     setParamWith(prio, 'policy-rt');
-    tr.cells[NICE].append(nice, prio);
+    // each named by the class that reads it, so the cell reads "nice 0" or "priority 80"
+    const named = (text, el) => { const l = document.createElement('label'); l.append(text, el); return l; };
+    const params = [named('nice', nice), named('priority', prio)];
     // scheduling class; the policies are grouped by the class that implements them, since that is
     // what decides the task's fate -- any real-time task outranks every fair one. The option values
     // stay the driver's own words.
@@ -900,26 +949,29 @@ function renderTask(t) {
     // spinner's value goes along (80 until set); a fair policy alone keeps the task's nice
     pol.onchange = () => { const v = pol.value, rt = v === 'fifo' || v === 'rr'; pol.dataset.pending = '1';
       enqueue(async () => { const r = await cmd(rt ? `policy-rt ${t.id} ${v} ${prio.value}` : `policy-fair ${t.id} ${v}`); delete pol.dataset.pending; if (r.error) pol.blur(); }); };
-    tr.cells[POL].append(pol);
+    tr.cells[SCHED].append(pol, ' ', ...params);   // the policy first, then the parameter it reads
     const aff = cpuMask(AFF_TITLE, (want) => `affinity ${t.id} ${want}`);
     tr.cells[AFF].append(aff);
     // pause / wake (label follows the task's state) and kill
     const pause = document.createElement('button'); pause.textContent = 'pause';
     pause.onclick = () => enqueue(() => cmd(`${pause.textContent} ${t.id}`));
+    const yld = document.createElement('button'); yld.textContent = 'yield';
+    yld.title = 'sched_yield(): the task gives the CPU up but stays runnable. Under rr it goes to the tail of its priority\u2019s list; under fifo the next task of the same priority runs, if any; the fair class skips it once and picks again';
+    yld.onclick = () => enqueue(() => cmd(`yield ${t.id}`));
     const kill = document.createElement('button'); kill.textContent = 'kill'; kill.title = 'ask the task to exit';
     kill.onclick = () => enqueue(() => cmd(`kill ${t.id}`));
-    tr.cells[ACT].append(pause, ' ', kill);
+    tr.cells[ACT].append(pause, ' ', yld, ' ', kill);
   }
   const s = t.stat ?? {};
   sync(tr.cells[CG].firstElementChild, s.cgroup);
-  sync(tr.cells[NICE].firstElementChild, s.nice);
-  if (s.rt_priority) sync(tr.cells[NICE].lastElementChild, s.rt_priority);   // 0 under a fair policy: keep the last real value
-  sync(tr.cells[POL].firstElementChild, s.policy);
+  sync(tr.cells[SCHED].children[1].lastElementChild, s.nice);
+  if (s.rt_priority) sync(tr.cells[SCHED].children[2].lastElementChild, s.rt_priority);   // 0 under a fair policy: keep the last real value
+  sync(tr.cells[SCHED].firstElementChild, s.policy);
   setParam(tr, s.policy);
   sync(tr.cells[AFF].firstElementChild, s.cpus);
   if (s.state !== undefined) tr.cells[ACT].firstElementChild.textContent = s.state === 'running' || s.state === 'runnable' ? 'pause' : 'wake';
   // weight is a fair-class number, read off the task's fair record; the real-time classes never have one
-  [[STATE, s.state ?? ''], [CPU, s.cpu], [TIME, ms(s.sum_exec_runtime)], [WEIGHT, s.policy === undefined ? undefined : s.fair?.weight ?? '']]
+  [[STATE, s.state ?? ''], [CPU, s.cpu], [TIME, ms(s.sum_exec_runtime)]]
     .forEach(([i, v]) => { if (v === undefined) return; const text = String(v); if (tr.cells[i].textContent !== text) tr.cells[i].textContent = text; });
 }
 
@@ -953,7 +1005,7 @@ function groupRow(path) {
   const tr = $('tasks').querySelector('tbody').insertRow();
   tr.className = 'group';
   // the task columns up to affinity (a cgroup's is its cpuset), then one cell across the task's
-  // cpu time, policy, parameter and weight for cpu.weight, then the actions
+  // cpu, cpu time and scheduling for cpu.weight, then the actions
   for (let i = 0; i <= AFF; i++) tr.insertCell();
   const weightCell = tr.insertCell(); weightCell.colSpan = ACT - AFF - 1;
   const actCell = tr.insertCell();
@@ -1065,7 +1117,6 @@ let eevdf = true;
 const queueCols = () => QUEUE_COLS.filter((c) => eevdf || c[3] !== 'eevdf');
 const QUEUE_COLS = [   // lag is printed always signed, so the column holds its width
   ['weight', (e) => e.weight, 'the entity\u2019s weight against its siblings on this queue, which is the only weight the scheduler compares: a task\u2019s from its nice, a cgroup\u2019s from cpu.weight divided between the CPUs by calc_group_shares'],
-  ['share', (e) => `${(e.share * 100).toFixed(e.share < 0.1 ? 1 : 0)}%`, 'the share of this CPU the entity gets while everything queued stays queued: its weight over the queue\u2019s total, times its parent cgroup\u2019s share -- 1024 of 2048 on the root queue, then 1024 of 3072 inside the cgroup, is a sixth'],
   ['eligible', (e) => e.eligible ? '\u2713' : '', 'entity_eligible: lag \u2265 0, so EEVDF may pick it; an ineligible row is also greyed', 'eevdf'],
   ['lag', (e) => (e.lag < 0 ? '\u2212' : '+') + ms(Math.abs(e.lag)), 'the queue\u2019s average vruntime minus this entity\u2019s, in virtual ms: zero is fair, positive is owed time; EEVDF only picks entities with lag \u2265 0. Live while queued; the kernel\u2019s saved se->vlag, which place_entity restores, while not', 'eevdf'],
   ['vruntime', (e) => ms(e.vruntime), 'virtual ms on this queue\u2019s own clock: comparable only with the other rows of this queue'],
@@ -1092,18 +1143,34 @@ function queueRows(cpu, path, depth, byCpu, tb) {
   }
 }
 const chip = (t) => { const c = document.createElement('span'); c.className = 'task-chip'; c.style.background = colorOf(t.id); c.textContent = t.id; return c; };
-function classTable(cpu, label, note, cols, firstTitle) {
-  const box = document.createElement('div'); box.className = 'rq';
-  const head = document.createElement('header'); head.textContent = `cpu ${cpu} \u00b7 ${label}`;
-  if (note) { const n = document.createElement('span'); n.className = 'note'; n.textContent = note; head.append(' \u00b7 ', n); }
+// A header's run of "label value" pairs, each with the kernel's meaning on hover.
+function stats(head, pairs) {
+  for (const [label, value, title] of pairs) {
+    const s = document.createElement('span'); s.className = 'note'; s.title = title;
+    s.append(`${label} `); const b = document.createElement('b'); b.textContent = value; s.append(b);
+    head.append(' ', s);
+  }
+}
+// One class's block inside a CPU's box: a header line naming the class -- and, smaller, which
+// kernel policies it is -- with the class's numbers at the right, then its table.
+function classTable(label, detail, title, cols, firstTitle) {
+  const box = document.createElement('div'); box.className = 'class';
+  const head = document.createElement('header'); head.className = 'row';
+  const name = document.createElement('span'); name.className = 'name'; name.textContent = label; name.title = title;
+  const small = document.createElement('small'); small.textContent = detail; name.append(small);
+  head.append(name);
   const table = document.createElement('table');
   const th = table.createTHead().insertRow();
   for (const [name, , title] of [['task', , firstTitle], ...cols]) { const c = document.createElement('th'); c.textContent = name; c.title = title; th.append(c); }
   box.append(head, table);
-  return { box, tb: table.createTBody() };
+  return { box, head, tb: table.createTBody() };
 }
+// The fair class on one CPU, shown while anything is on it. The queue's PELT averages are the
+// balancer's reading and sit in its table; an empty queue has nothing else to show.
 function fairTable(cpu, byCpu) {
-  const { box, tb } = classTable(cpu, 'fair', '', queueCols(),
+  const { box, head, tb } = classTable('fair', eevdf ? 'EEVDF' : 'CFS',
+    eevdf ? 'the fair class, kernel/sched/fair.c: EEVDF since 6.6 picks the eligible entity with the earliest deadline' : 'the fair class, kernel/sched/fair.c: CFS picks the entity with the smallest vruntime',
+    queueCols(),
     'a task, in its colour, or a cgroup\u2019s entity; indented rows are the queue inside that cgroup. \u25B6 is curr at its level: the task that ran this tick and the cgroup entities it ran under; \u25B7 is what pick_eevdf would take next, where that differs');
   tb.parentElement.tHead.rows[0].cells[0].textContent = 'entity';
   queueRows(cpu, '/', 0, byCpu, tb);
@@ -1118,12 +1185,11 @@ const RT_COLS = [
   ['policy', ({ t }) => t.stat.policy, 'fifo runs until it yields or blocks; rr gives way to the next task of the same priority when its timeslice is spent'],
   ['slice left', ({ t, e }) => t.stat.policy === 'rr' ? `${e.time_slice} ms` : '', 'rr only: what remains of the 100 ms timeslice (RR_TIMESLICE, in ticks); at zero the task goes to the tail of its list. fifo has none'],
 ];
-function rtTable(cpu, rq, rows) {
+function rtTable(rq, rows) {
   const used = `${(rq.rt_time / 1e6).toFixed(0)} of ${(rq.rt_runtime / 1e6).toFixed(0)} ms`;
-  const { box, tb } = classTable(cpu, 'real-time', rq.throttled ? `throttled, ${used} used` : `${used} used`, RT_COLS,
+  const { box, head, tb } = classTable('real-time', '', 'the real-time class, kernel/sched/rt.c: the head of the highest non-empty priority list runs, and any task here outranks every fair one', RT_COLS,
     'a task, in its colour, in the order the class runs them: by priority, then by place in the priority\u2019s list. \u25B6 ran this tick; \u25B7 is the head of the highest list, which pick_next_task_rt would take, where that differs');
-  box.classList.add('rt');
-  box.firstElementChild.title = 'sched_rt_runtime_us of sched_rt_period_us: the real-time class gets this much of each 1 s period. rt_time is what it has used so far this period; when it reaches the runtime the class is throttled -- dequeued whole -- until the period ends, and the fair class gets the rest';
+  stats(head, [[rq.throttled ? 'throttled, used' : 'used', used, 'sched_rt_runtime_us of sched_rt_period_us: the real-time class gets this much of each 1 s period. rt_time is what it has used so far this period; when it reaches the runtime the class is throttled -- dequeued whole -- until the period ends, and the fair class gets the rest']]);
   if (rq.throttled) box.classList.add('throttled');
   rows.sort((a, b) => b.t.stat.rt_priority - a.t.stat.rt_priority || a.e.position - b.e.position);
   for (const row of rows) {
@@ -1135,16 +1201,63 @@ function rtTable(cpu, rq, rows) {
   }
   return box;
 }
+// One box per CPU: the runqueue itself on the header line -- what runs, how much is queued, when
+// the balancer next looks -- then the classes with something on it, real-time first since it
+// outranks fair. The runqueue's numbers are the CPU record's; each class's are its own record's
+// (kmod/shm.h keeps them apart the same way).
+function cpuBox(cpu) {
+  const r = cpuRecords.get(cpu);
+  const box = document.createElement('div'); box.className = 'rq';
+  const head = document.createElement('header');
+  const name = document.createElement('span'); name.className = 'cpu'; name.textContent = `cpu ${cpu}`; head.append(name);
+  box.append(head);
+  if (!r) return box;
+  if (r.idle) box.classList.add('idle');   // the tables below mark what runs; an idle CPU has none, and its box is drawn dashed
+  const f = r.fair;
+  stats(head, [['switches', r.nr_switches, 'rq->nr_switches: context switches on this CPU so far']]);
+  const rt = tasks.filter((t) => t.alive && t.stat?.rt?.on_rq && t.stat.cpu === cpu).map((t) => ({ t, e: t.stat.rt }));
+  if (rt.length && r.rt) box.append(rtTable(r.rt, rt));
+  const byCpu = entities.filter((e) => e.cpu === cpu);
+  const queued = byCpu.some((e) => e.on_rq) || tasks.some((t) => t.alive && t.stat?.fair?.on_rq && t.stat.cpu === cpu);
+  if (f && queued) box.append(fairTable(cpu, byCpu));
+  return box;
+}
+// ---- what moved: the balancer's own record of itself. A load_balance event is a CPU that ran the
+// balancer at a level (should_we_balance said yes there), a migrate event a task changing CPU,
+// whether the balancer pulled it or a wakeup placed it. Kept per command, newest first, and the
+// last command's moves are drawn on the CPU cards as arrivals and departures. ----
+const BALANCE_LOG_MAX = 5;
+const balanceLog = [];      // {tick, line, balances: [{cpu, name, span}], moves: [{task, from, to}]}
+let lastMoves = { pulled: new Set() };   // the CPUs that ran the balancer on the last command
+function noteBalancing(line, tick, events) {
+  const balances = events.filter((e) => e.type === 'load_balance').map((e) => ({ cpu: e.dst_cpu, name: e.name, span: e.span }));
+  const moves = events.filter((e) => e.type === 'migrate').map((e) => ({ task: e.task, from: e.src_cpu, to: e.dst_cpu }));
+  lastMoves = { pulled: new Set(balances.map((b) => b.cpu)) };
+  if (!balances.length && !moves.length) return;
+  balanceLog.unshift({ tick, line: line ?? 'boot', balances, moves });
+  balanceLog.length = Math.min(balanceLog.length, BALANCE_LOG_MAX);
+  const ol = $('balance-log');
+  ol.replaceChildren(...balanceLog.map((entry) => {
+    const li = document.createElement('li'); li.value = entry.tick;
+    const parts = [];
+    // a balance names its level and the CPU that pulled; the moves in the same command are its
+    // result when the command was a tick, and a wakeup's placement otherwise
+    for (const b of entry.balances) parts.push(`${LEVEL_WORD[b.name] ?? b.name} balance on cpu ${b.cpu}`);
+    li.append(parts.join(', '));
+    if (entry.balances.length && entry.moves.length) li.append(': ');
+    else if (entry.moves.length) li.append(entry.line.startsWith('tick') ? '' : `${entry.line.split(' ')[0]}: `);
+    entry.moves.forEach((m, i) => {
+      if (i) li.append(', ');
+      const t = tasks.find((t) => t.id === m.task);
+      li.append(t ? chip(t) : `task ${m.task}`, ` cpu ${m.from} \u2192 cpu ${m.to}`);
+    });
+    if (entry.balances.length && !entry.moves.length) li.append(': nothing to move');
+    return li;
+  }));
+}
+const LEVEL_WORD = { SMT: 'core', CLS: 'cluster', MC: 'socket', PKG: 'socket', DIE: 'socket', NODE: 'node' };
 function renderQueues() {
-  const blocks = [];
-  for (let cpu = 1; cpu <= ncpus; cpu++) {
-    const rt = tasks.filter((t) => t.alive && t.stat?.rt?.on_rq && t.stat.cpu === cpu).map((t) => ({ t, e: t.stat.rt }));
-    const rq = cpuRecords.get(cpu)?.rt;
-    if (rt.length && rq) blocks.push(rtTable(cpu, rq, rt));
-    const byCpu = entities.filter((e) => e.cpu === cpu);
-    if (byCpu.some((e) => e.on_rq) || tasks.some((t) => t.alive && t.stat?.fair?.on_rq && t.stat.cpu === cpu)) blocks.push(fairTable(cpu, byCpu));   // else idle: nothing to pick between
-  }
-  $('queues').replaceChildren(...blocks);
+  $('queues').replaceChildren(...Array.from({ length: ncpus }, (_, i) => cpuBox(i + 1)));
 }
 
 // ---- transport: kstep.mjs's cmd(), one command in flight at a time, with a transcript ----
@@ -1168,10 +1281,17 @@ async function cmd(line) {
     for (const [id, f] of Object.entries(FIGURES)) if (f.eevdf) picks.get(id).parentElement.hidden = !eevdf;
     if (!eevdf) setCharts(charts.map((c) => c.id).filter((id) => !FIGURES[id].eevdf));
   }
-  for (const e of vm.events()) append(JSON.stringify(e), 'event');   // the trace, in the log pane
-  // The region keeps each class's records in tables of their own (kmod/shm.h); the page joins
-  // them here, once: a CPU record carries the fair and real-time queues on it as .fair and .rt,
-  // a task record the class's view of the task the same way -- one of the two, by its policy.
+  const events = vm.events();
+  for (const e of events) append(JSON.stringify(e), 'event');   // the trace, in the log pane
+  showState(st, events, line);
+  return reply;
+}
+// The machine's state into the tables: what every command ends with, and what a test can feed
+// without a VM. The region keeps each class's records in tables of their own (kmod/shm.h); the
+// page joins them here, once: a CPU record carries the fair and real-time queues on it as .fair
+// and .rt, a task record the class's view of the task the same way -- one of the two, by its policy.
+export function showState(st, events = [], line = null) {
+  noteBalancing(line, st.timestamp, events);
   const by = (rows, key) => new Map(rows.map(r => [r[key], r]));
   const cfs = by(st.cfs, 'cpu'), rtq = by(st.rt, 'cpu'), fairOf = by(st.entities.filter(e => e.task), 'task'), rtOf = by(st.rt_entities, 'task');
   cpuRecords = new Map(st.cpus.map(c => [c.cpu, { ...c, fair: cfs.get(c.cpu), rt: rtq.get(c.cpu) }]));
@@ -1180,11 +1300,16 @@ async function cmd(line) {
   entities = st.entities.filter(e => !e.task);
   taskRecords = new Map(st.tasks.map(s => [s.task, { ...s, fair: fairOf.get(s.task), rt: rtOf.get(s.task) }]));
   const live = new Set(taskRecords.keys());
-  for (const s of taskRecords.values()) { const t = tasks.find(t => t.id === s.task); if (t) { t.stat = s; t.alive = true; renderTask(t); } }
+  // a task the region reports that the page has not met -- one it did not create itself -- is
+  // adopted: the region is the truth about which tasks exist
+  for (const s of taskRecords.values()) {
+    let t = tasks.find(t => t.id === s.task);
+    if (!t) { t = { id: s.task, alive: true }; tasks.push(t); }
+    t.stat = s; t.alive = true; renderTask(t);
+  }
   for (const t of tasks) if (t.alive && !live.has(t.id)) { t.alive = false; renderTask(t); }
   domains = st.domains;
-  renderGroups(); renderQueues(); renderCpus(); renderDomains();   // not draw(): the charts are a function of the ticks so far
-  return reply;
+  renderGroups(); renderQueues(); renderBalancer();   // not draw(): the charts are a function of the ticks so far
 }
 // A step is one `tick`, and the snapshot it leaves behind is one column of every chart.
 async function step() {
@@ -1292,12 +1417,10 @@ if (layoutCustom) {
 }
 // a new cluster joins the last socket; a new socket starts one of its own
 $('discard-cpus').onclick = () => setCpuDraft(machine);
-if (location.hash === '#cpu-editor') $('cpu-editor').open = true;
 // the chart stack: ?charts= wins (a shared view), then the scenario's own, then cpu time. Ids the
 // catalog no longer has are dropped, so a link saved before a figure was retired still opens.
 const urlCharts = (params.get('charts') ?? '').split(',').filter((id) => FIGURES[id]);
 setCharts(urlCharts.length ? urlCharts : scenario?.charts ?? ['placement']);
-renderCpus();
 // Restart is a reload: the URL is the whole initial condition (scenario or script, and the chart
 // set), and QEMU never exits under Emscripten, so a fresh VM is a fresh page.
 $('restart').onclick = () => location.reload();

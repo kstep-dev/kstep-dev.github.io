@@ -20,11 +20,25 @@
   /* queues: one table per CPU, the root queue's rows first and a cgroup's queue indented under
      its entity's row, since that queue hangs off that entity. Rows are the entities the queue
      picks between, tasks and group entities alike, in the kernel's order */
-  #queues { display: flex; flex-wrap: wrap; gap: .6rem; align-items: flex-start; margin: .3rem 0 .6rem; }
-  #queues:empty::before { content: 'no queued task'; color: GrayText; font-size: .8rem; }
-  .rq { border: 1px solid GrayText; border-radius: .35rem; padding: .35rem .45rem; width: fit-content; }
-  .rq > header { font-size: .8rem; color: GrayText; }
-  .rq table { font-size: .8rem; border-collapse: collapse; margin-top: .2rem; }
+  /* one box per CPU, all the same width, and a row's boxes the same height: a task moving
+     between CPUs or classes changes what is inside a box, not the boxes */
+  #queues { display: grid; grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr)); gap: .6rem; margin: .3rem 0 .6rem; }
+  .rq { border: 1px solid GrayText; border-radius: .35rem; padding: .35rem .45rem; min-width: 0; overflow-x: auto; }
+  .rq > header { display: flex; gap: .6rem; align-items: baseline; font-size: .85rem; color: GrayText; }
+  .rq > header > .cpu { color: CanvasText; font-weight: 600; }
+  .rq > header > .note { margin-left: auto; }   /* the runqueue's number at the right, as a class's are */
+  .rq > header b { color: CanvasText; font-weight: 600; }
+  .rq > header .task-chip { vertical-align: middle; }
+  /* a class's block inside a CPU's box: its own line, then its table */
+  .rq .class { margin-top: .5rem; }   /* the class's name marks where its block starts */
+  /* the class's line: its name in front, the class's numbers pushed to the right */
+  .rq .class > header { display: flex; gap: .6rem; align-items: baseline; font-size: .85rem; color: GrayText; }
+  .rq .class > header .name { color: CanvasText; font-weight: 600; }
+  .rq .class > header .name small { color: GrayText; font-weight: normal; margin-left: .3rem; }
+  .rq .class > header .note:first-of-type { margin-left: auto; }
+  .rq .class.throttled > header .name { color: GrayText; text-decoration: line-through; }   /* the real-time class is off the CPU until the period ends */
+  .rq.idle { border-style: dashed; }
+  .rq table { font-size: .85rem; border-collapse: collapse; margin-top: .2rem; }
   .rq th, .rq td { text-align: right; font-variant-numeric: tabular-nums; padding: 0 .3rem; }
   .rq th:first-child, .rq td:first-child { text-align: left; padding-left: 0; }
   .rq th { color: GrayText; font-weight: normal; }
@@ -35,9 +49,7 @@
   .rq tr.running td:first-child::after { visibility: visible; }
   .rq tr.next td:first-child::after { content: '\25B7'; visibility: visible; }   /* what pick_eevdf would take next */
   .rq .path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .rq.rt > header .note { font-variant-numeric: tabular-nums; }
-  .rq.rt.throttled { border-style: dashed; }   /* the class is off the CPU until the period ends */
-  .rq.rt.throttled > header .note { color: inherit; }
+  .rq .note { font-variant-numeric: tabular-nums; }
   #cpu-hint { margin: 0; }
   /* scenario tabs: the page's navigation; everything below is the selected scenario */
   #scenarios { display: flex; flex-wrap: wrap; gap: 0; margin: 1.2rem 0 0; border-bottom: 1px solid GrayText; }
@@ -81,6 +93,8 @@
   #tasks tr.group td { background: color-mix(in srgb, GrayText 10%, Canvas); color: GrayText; font-size: .85rem; }
   #tasks tr.group .path { font-weight: 600; color: CanvasText; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   #tasks tr.group input[type=number] { width: 3.4rem; }
+  /* the parameter, named by its class; one width for "nice" and "priority", so the row holds still when the policy changes */
+  #tasks td label { display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; min-width: 6.8rem; }
   #tasks tr.group .f-label { font-size: .75rem; }
   #tasks tr.group button { padding: 0 .35rem; font-size: .7rem; line-height: 1.5; }
   #tasks tr.group td:last-child > span { display: inline-flex; }
@@ -102,24 +116,56 @@
   #bugs td:last-child { width: 55%; text-align: center; }
   #bugs img { max-height: 14rem; max-width: 100%; }
   #bugs td div { line-height: 1.6; }
-  #domain-table th, #domain-table td { text-align: left; vertical-align: top; }
-  #domain-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  #domain-table .lvl { font-weight: 600; }
-  #domain-table td.hot { color: crimson; font-weight: 600; }
-  #domain-table .span { font-variant-numeric: tabular-nums; }
-  .sg { display: inline-block; border: 1px solid GrayText; border-radius: .25rem; padding: .05rem .3rem; margin: 0 .25rem .2rem 0; font-size: .8rem; font-variant-numeric: tabular-nums; }
-  .sg b { font-weight: 600; }
-  .sg i { font-style: normal; color: GrayText; }
-  .flag { display: inline-block; font-size: .72rem; padding: .05rem .25rem; margin: 0 .2rem .2rem 0; border-radius: .2rem; background: color-mix(in srgb, GrayText 15%, transparent); }
-  .flag.asym { background: color-mix(in srgb, AccentColor 30%, transparent); }
-  #domains-collapsed { color: GrayText; }
-  #cpu-stats { white-space: nowrap; }
-  #cpu-stats th { text-align: left; }
-  #cpu-stats td { font-variant-numeric: tabular-nums; }
-  #cpu-editor { margin: 1.2rem 0 .2rem; border-top: 1px solid color-mix(in srgb, GrayText 35%, transparent); padding-top: .6rem; }
-  #cpu-editor summary { cursor: pointer; font-weight: 600; }
+  /* the domain tree: a box per span, its groups inside it, CPU cards at the leaves */
+  #balancer { margin: .3rem 0 .6rem; overflow-x: auto; }
+  #balancer:empty::before { content: 'no sched domains: one CPU'; color: GrayText; font-size: .85rem; }
+  .dom { border: 1px solid GrayText; border-radius: .35rem; padding: .35rem .45rem; min-width: 0; overflow: hidden; }
+  .dom > header { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; font-size: .8rem; color: GrayText; margin-bottom: .25rem; }
+  .dom > header > span:last-child { margin-left: auto; }   /* the task count at the right */
+  .dom > footer { display: flex; justify-content: flex-end; font-size: .8rem; color: GrayText; margin-top: .3rem; }
+  .dom > footer .stat { font-variant-numeric: tabular-nums; }
+  .dom > footer .stat b { color: CanvasText; font-weight: 600; }
+  .dom > footer:empty, .dom > footer .stat:empty { display: none; }
+  .dom > header .stat { color: GrayText; font-variant-numeric: tabular-nums; }
+  .dom > header .stat b { color: CanvasText; font-weight: 600; }
+  .dom > header .lvl { color: CanvasText; font-weight: 600; }
+  .dom > header .span { font-variant-numeric: tabular-nums; }
+  /* sibling boxes side by side while they fit, at least 22rem each and at most four across; wider ones stack */
+  .dom > .bar { margin: 0 0 .6rem; }   /* room between a box's bar and what it sums */
+  .dom > .kids { display: grid; grid-template-columns: repeat(auto-fit, minmax(max(22rem, calc(25% - .3rem)), 1fr)); gap: .4rem; }
+  /* a CPU's card: name, frequency and the balancer's word on one line, the bar across the card,
+     the readings under it; a group's cards sit side by side */
+  /* cards at least 11rem wide, and never more than four across: a card is at least a quarter of the row less the gaps */
+  .dom > .kids.cpus, #balancer.cpus { display: grid; grid-template-columns: repeat(auto-fit, minmax(max(11rem, calc(25% - .3rem)), 1fr)); gap: .4rem; }
+  .cpu-row { border: 1px dotted GrayText; border-radius: .3rem; padding: .3rem .45rem; display: flex; flex-direction: column; gap: .2rem; font-size: .8rem; line-height: 1.35; min-width: 0; }
+  .cpu-row .line { display: flex; flex-wrap: wrap; align-items: center; gap: 0 .7rem; white-space: nowrap; }
+  .cpu-row .line > .stat:last-child { margin-left: auto; }   /* the task count, and the countdown below it, at the right as in a box */
+  .cpu-row > .bar { flex: none; line-height: 1; }
+  .cpu-row .freq input { padding: 0 .2rem; font-size: .8rem; }
+  .cpu-row .cpu { font-weight: 600; }
+  .cpu-row .freq { display: inline-flex; align-items: center; gap: .3rem; color: GrayText; }
+  .cpu-row .freq input { width: 3.2rem; }
+  .cpu-row .stat { color: GrayText; font-variant-numeric: tabular-nums; }
+  .cpu-row .stat b { color: CanvasText; font-weight: 600; }
+  .cpu-row .hot:empty { display: none; }
+  /* one bar per box: the fill is running in the class's colour, the number inside at the right */
+  .bar { display: block; min-width: 0; }
+  .bar .track { position: relative; display: block; height: .85rem; border: 1px solid color-mix(in srgb, GrayText 55%, transparent); border-radius: .2rem; overflow: hidden; background: Canvas; }
+  .bar .fill { position: absolute; inset: 0 auto 0 0; background: color-mix(in srgb, AccentColor 60%, Canvas); }
+  .bar[data-cls="has spare"] .fill { background: color-mix(in srgb, seagreen 65%, Canvas); }
+  .bar[data-cls="fully busy"] .fill { background: color-mix(in srgb, darkorange 70%, Canvas); }
+  .bar[data-cls="overloaded"] .fill { background: color-mix(in srgb, crimson 80%, Canvas); }
+  .bar .num { position: absolute; inset: 0 .35rem 0 auto; display: flex; align-items: center; font-size: .62rem; line-height: 1; color: CanvasText; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .hot { color: crimson; font-weight: 600; }
+  .cpu-row.pulled { border-style: solid; border-color: color-mix(in srgb, AccentColor 70%, GrayText); }
+  /* the recent balances and moves, newest first */
+  #balance-log { margin: .3rem 0 .6rem; padding-left: 3.4rem; font-size: .8rem; color: GrayText; font-variant-numeric: tabular-nums; }
+  #balance-log li { margin: .1rem 0; }
+  #balance-log li::marker { content: 'tick ' attr(value) '  '; }
+  #balance-log .task-chip { vertical-align: middle; }
+  #balance-log:empty::before { content: 'nothing has moved yet'; margin-left: -3.4rem; }
   #cpus h3 { margin: 1.2rem 0 .4rem; font-size: .95rem; }
-  #running-cpus, #cpu-draft { font-size: .85rem; font-weight: normal; }
+  #cpu-draft { font-size: .85rem; font-weight: normal; }
   #cpu-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin: .6rem 0; align-items: center; }
   #cpu-layout input { width: 3rem; }
   /* the machine drawing, which is also the form: every box is the thing it draws */
@@ -131,9 +177,13 @@
   #cpu-layout .clusters, #cpu-layout .cores { display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-start; }
   #cpu-layout .core { border: 1px dotted GrayText; border-radius: .25rem; padding: .3rem; display: flex; flex-direction: column; gap: .25rem; align-items: stretch; }
   #cpu-layout .core > button.act { align-self: flex-start; }
-  #cpu-layout .corecpus { font-size: .68rem; color: GrayText; font-variant-numeric: tabular-nums; }
-  #cpu-layout .caprow { display: flex; flex-direction: column; gap: .1rem; font-size: .7rem; color: GrayText; }
-  #cpu-layout .capnum { width: 4rem; font-size: .72rem; padding: 0 .2rem; font-variant-numeric: tabular-nums; }
+  #cpu-layout .corecpus { display: inline-flex; flex-wrap: wrap; gap: .25rem; align-items: center; }
+  #cpu-layout .thread { display: inline-flex; align-items: center; gap: .15rem; font-size: .72rem; font-variant-numeric: tabular-nums;
+    border: 1px solid color-mix(in srgb, GrayText 45%, transparent); border-radius: .25rem; padding: 0 .3rem; }
+  #cpu-layout .thread button.act { padding: 0 .15rem; font-size: .6rem; border: 0; background: none; }
+  #cpu-layout .cpuline { display: flex; flex-direction: column; align-items: flex-start; gap: .25rem; }   /* the threads, then the capacity on its own line */
+  #cpu-layout .caprow { display: inline-flex; align-items: center; gap: .3rem; font-size: .7rem; color: GrayText; }
+  #cpu-layout .capnum { width: 3.2rem; font-size: .72rem; padding: 0 .2rem; font-variant-numeric: tabular-nums; }
   #cpu-layout .capnum.bad { border-color: crimson; color: crimson; }
   /* every box action looks the same, whatever it says; adding sits by the name, so clicking it
      twice lands twice, and only the destructive one is pushed to the right edge */
@@ -193,53 +243,31 @@
 
 <h2>Workload</h2>
 <div class="table-scroll" role="region" aria-label="Tasks" tabindex="0">
-<table id="tasks"><thead><tr><th>task</th><th title="The cgroup the task is in. Pick another to move it there; a cgroup with child cgroups cannot take tasks (cgroup v2 keeps tasks and controlled children apart), so it is greyed out.">cgroup</th><th>state</th><th>cpu</th><th title="A task's allowed CPUs; a cgroup's cpuset.cpus">affinity</th><th title="sum_exec_runtime: CPU time this task has actually been given, in milliseconds of real time">cpu time</th><th>policy</th><th title="The parameter the task's own class reads: nice for the fair classes (normal, batch), a real-time priority for fifo and rr. SCHED_IDLE ignores nice as well, so it is shown greyed out there.">nice / priority</th><th title="The fair classes' share, from nice: 1024 is nice 0, and SCHED_IDLE pins it at 3. Blank for fifo and rr, which never read it. A cgroup's row shows its cpu.weight, whose 100 is a task's 1024, against its sibling cgroups and the tasks beside it. Compared against the siblings on the queue, under Scheduler.">weight</th><th></th></tr></thead><tbody></tbody></table>
+<table id="tasks"><thead><tr><th>task</th><th title="The cgroup the task is in. Pick another to move it there; a cgroup with child cgroups cannot take tasks (cgroup v2 keeps tasks and controlled children apart), so it is greyed out.">cgroup</th><th>state</th><th title="A task's allowed CPUs; a cgroup's cpuset.cpus">affinity</th><th>cpu</th><th title="sum_exec_runtime: CPU time this task has actually been given, in milliseconds of real time">cpu time</th><th title="How the task is scheduled, as sched_setattr takes it: the policy, grouped by the class that implements it, and the one parameter that class reads -- nice for the fair classes (normal, batch), a real-time priority for fifo and rr. SCHED_IDLE ignores nice as well, so it is greyed there. The weight the fair class derives from nice is under Scheduler, next to the siblings it is compared against.">policy</th><th></th></tr></thead><tbody></tbody></table>
 </div>
 
 
 <h2>Scheduler</h2>
-<p class="hint">One scheduler, several classes: what each CPU has to pick between after the last command, one block per class with something queued. The real-time class comes first because any task on it outranks every fair one: it runs the head of its highest priority list, and its share of each second is capped. The fair queue picks the eligible entity with the earliest deadline, whether it is a task or another cgroup, whose own queue is indented under its entity, since that is where it hangs.</p>
+<p class="hint">One box per CPU: its runqueue in the header, then each class with something queued. Real-time first, since it outranks fair; the fair queue picks the eligible entity with the earliest deadline, a task or a cgroup whose own queue is indented under it.</p>
 <div id="queues"></div>
+
+<h2>Load balancer</h2>
+<p class="hint">The sched domains the kernel built, a box per span down to the CPUs; a level that adds nothing is dropped by the kernel and absent here. One bar per box: <b>running</b>, the time fair tasks were on the CPU, over the box&#x27;s capacity, 1024 being one CPU at full speed, in the colour of the balancer&#x27;s verdict: green has spare room, orange is fully busy, red is overloaded. Hover it for the two other averages the balancer reads, contention and load, and hover a level&#x27;s name for its flags and thresholds. Each box says in how many ticks it is next weighed against its siblings. <span id="domains-collapsed"></span></p>
+<div id="balancer"></div>
+<p class="hint">What moved, and why, per command: a <i>balance</i> is a CPU running the balancer at a level and pulling from the busiest group's busiest CPU; a move on a create or wake is the wakeup placement, which picks an idle CPU near where the task last ran or near its waker. The destination is always the CPU that did the pulling.</p>
+<ol id="balance-log" reversed></ol>
 
 
 <section id="cpus" aria-labelledby="cpus-title">
-<h2 id="cpus-title">Machine <span id="running-cpus" class="hint"></span></h2>
-<h3>CPUs</h3>
-<div class="table-scroll" role="region" aria-label="CPU statistics" tabindex="0">
-<table id="cpu-stats"><thead>
-<tr><th>CPU</th>
-  <th title="Current frequency on the scale where 1024 is a full CPU, as cpufreq would move it under a running system. Sent as one cpu-freq line for the CPU changed. The hardware&#x27;s own capacity is set per cluster in Layout, below.">Frequency</th>
-  <th>Task</th>
-  <th title="PELT utilization of the fair class, on a scale where 1024 is a full CPU. Real-time and deadline tasks are not in it.">Utilization</th>
-  <th title="Weighted demand of the fair class (PELT), not a task count. Real-time and deadline tasks are not in it.">Load avg</th>
-  <th title="PELT runnable demand of the fair class; 1024 per fully runnable task. Real-time and deadline tasks are not in it.">Runnable avg</th>
-  <th title="Root fair queue virtual clock, in milliseconds of virtual time; unavailable on kernels that removed this counter">min vruntime</th>
-  <th title="Kernel cumulative context-switch counter">Context switches</th>
-  <th title="cfs_rq h_nr_runnable: runnable tasks as the load balancer counts them, and the number it tries to even out. When the runqueue holds more than that — a real-time or deadline task, or one left queued by delayed dequeue — the raw rq->nr_running is shown after it in brackets.">Runnable</th>
-  <th title="Ticks until rq->next_balance falls due; 0 means this CPU will look for work to pull at the next tick.">Next balance</th>
-</tr></thead><tbody></tbody></table>
-</div>
+<h2 id="cpus-title">Topology <span id="cpu-draft" class="hint"></span></h2>
 
-
-<h3>Sched domains</h3>
-<p class="hint">What the kernel built from the layout, innermost level first &mdash; not what was asked for. Linux drops a level whose span adds nothing over its child, so a level named in <code>cpu-topo</code> can be missing here; the balancer only walks what is left. <span id="domains-collapsed"></span></p>
-<div class="table-scroll" role="region" aria-label="Sched domains" tabindex="0">
-<table id="domain-table"><thead><tr>
-  <th title="The topology level, innermost first. Its balancing knobs — interval, imbalance_pct, busy_factor, cache_nice_tries — are set per level and never move; hover a level to read them.">Level</th><th>Span</th>
-  <th title="The balancing groups this level is divided into, with each group's total capacity. A CPU's load balancer compares its own group against the others; the order is per CPU (its own group first), so they are listed lowest CPU first here.">Groups</th>
-  <th title="The SD_* flags that tell this level apart: the ones every level shares are left out, since they say nothing about this one. Hover a cell for the full set.">Flags</th>
-  <th title="How long ago this level last balanced, across its span, and how many attempts have failed in a row once there are any: past cache_nice_tries + 2 the balancer escalates to active balancing, migrating a task that is currently running. Hover a cell for the per-CPU spread and the interval.">Last balanced</th>
-</tr></thead><tbody></tbody></table>
-</div>
-
-<details id="cpu-editor"><summary>Layout <span id="cpu-draft" class="hint"></span></summary>
-<p>Describe the machine: what kinds of core it has, and how they are grouped. A cluster is a shared cache; cores in one cluster need not be alike, which is what an arm64 DSU looks like. This decides how many CPUs the VM boots with, so changing it restarts and resets tasks, cgroups, and the charts.</p>
+<section id="cpu-editor">
+<p class="hint">The machine: its sockets, their clusters of cores, and each core's threads and capacity. A cluster is a shared cache, and its cores need not be alike. Each thread is one CPU, numbered cpu 1 upwards across the tree; cpu 0 runs the driver and is kept out of the scheduler's reach. Capacity is the hardware and is applied at boot; frequency, on each CPU's card under Load balancer, changes while it runs. Changing the machine restarts the VM and resets tasks, cgroups and the charts.</p>
 <div id="cpu-layout"></div>
-<p class="hint">Each thread is one CPU, numbered cpu1 upwards across the tree; cpu0 runs the driver and is kept out of the scheduler's reach. Capacity is the hardware, so it is applied at boot; frequency, in the CPUs table, changes while it runs.</p>
 <p id="cpu-hint" class="hint" role="status"></p>
 <div id="cpu-actions"><span id="ncpus-label"></span><button id="boot">Restart with these CPUs</button><button id="discard-cpus">Discard changes</button></div>
 
-</details>
+</section>
 </section>
 </section>
 
