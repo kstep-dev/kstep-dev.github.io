@@ -955,12 +955,9 @@ function renderTask(t) {
     // pause / wake (label follows the task's state) and kill
     const pause = document.createElement('button'); pause.textContent = 'pause';
     pause.onclick = () => enqueue(() => cmd(`${pause.textContent} ${t.id}`));
-    const yld = document.createElement('button'); yld.textContent = 'yield';
-    yld.title = 'sched_yield(): the task gives the CPU up but stays runnable. Under rr it goes to the tail of its priority\u2019s list; under fifo the next task of the same priority runs, if any; the fair class skips it once and picks again';
-    yld.onclick = () => enqueue(() => cmd(`yield ${t.id}`));
     const kill = document.createElement('button'); kill.textContent = 'kill'; kill.title = 'ask the task to exit';
     kill.onclick = () => enqueue(() => cmd(`kill ${t.id}`));
-    tr.cells[ACT].append(pause, ' ', yld, ' ', kill);
+    tr.cells[ACT].append(pause, ' ', kill);
   }
   const s = t.stat ?? {};
   sync(tr.cells[CG].firstElementChild, s.cgroup);
