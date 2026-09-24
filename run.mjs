@@ -2,7 +2,7 @@
 // The playground headless under Node (>= 20; emsdk ships one: build/emsdk/node/*/bin/node).
 //
 //   ./run.mjs [--build v6.18 | --image DIR] [--smp 3] [--mem 64] [--tasks 3] [--ticks 30]  # round-robin demo: who ran where
-//   ./run.mjs --bench [10]         # per-command latency: `tick`s, then `top`s, N seconds each
+//   ./run.mjs --bench [10]         # per-command latency: `tick`s, then `policy-fair`s, N seconds each
 //   ./run.mjs --check              # deploy gate: the staged image (site/images/cli) answers every verb the page uses
 //   ./run.mjs --snapshot --image site/images/cli [--smp 5]   # write snap-<smp>.bin.gz + .json there: the machine at the ready line
 //
@@ -82,11 +82,11 @@ if ('check' in args) {
 } else if ('bench' in args) {
   const seconds = Number(args.bench || 10);
   for (let i = 0; i < Number(args.tasks ?? 3); i++) await cmd('create');
-  for (const verb of ['tick', `nice ${1} 0`]) {
+  for (const verb of ['tick', 'policy-fair 1 normal 0']) {
     const t = performance.now(); let n = 0;
-    while (performance.now() - t < seconds * 1000) { await cmd(verb); n++; }
+    while (performance.now() - t < seconds * 1000) { const r = await cmd(verb); if (r.error) throw new Error(`${verb}: ${r.error}`); n++; }
     const ms = (performance.now() - t) / n;
-    console.log(`${verb.padEnd(5)} ${n} in ${seconds}s: ${ms.toFixed(2)} ms/cmd, ${(1000 / ms).toFixed(0)}/s (smp=${smp})`);
+    console.log(`${verb.split(' ')[0].padEnd(11)} ${n} in ${seconds}s: ${ms.toFixed(2)} ms/cmd, ${(1000 / ms).toFixed(0)}/s (smp=${smp})`);
   }
   await cmd('exit');
 } else {

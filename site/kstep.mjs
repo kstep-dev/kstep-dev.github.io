@@ -73,9 +73,10 @@ export async function runKstep(Module, { files, smp, mem, onConsole, locateFile 
       write(stream, buffer, offset, length) { for (let i = 0; i < length; i++) sink(buffer[offset + i]); return length; },
       poll() { return (inq.length ? 1 : 0) | 4; },   // POLLIN when input is queued, always POLLOUT
     });
-    m.FS.mkdev(path, 0o666, dev);
+    const node = m.FS.mkdev(path, 0o666, dev);
     return {
-      send: (line) => { for (const b of new TextEncoder().encode(line + '\n')) inq.push(b); },
+      // a blocked poll wakes only on a notification
+      send: (line) => { for (const b of new TextEncoder().encode(line + '\n')) inq.push(b); node.notifyListeners(1); },
       next: () => lines.length ? Promise.resolve(lines.shift()) : new Promise(r => readers.push(r)),
     };
   };

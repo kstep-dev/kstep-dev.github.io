@@ -27,7 +27,7 @@ tag (v10.2.50 -> v11.1.1 needed no code change), rebuild with `./setup.sh qemu`,
 | `cross.meson` | meson cross file for the wasm64 dependencies (`setup.sh deps`) |
 | `setup.sh` | one-time: `setup` (apt, emsdk), `deps` (zlib, libffi, glib for wasm64), `qemu` (aarch64-softmmu, virt machine only, into `site/qemu/`) |
 | `kstep viz` (in the parent repo: `../kstep.sh viz`) | builds the site: compiles `crates/core` for wasm32 into `site/kstep_core.js` + `kstep_core_bg.wasm`, writes `site/data.json` (version stamp and the bug catalog from `bugs.yaml`) and rebuilds and copies a playground image per supported LTS kernel (kSTEP's `build/v5.15` .. `build/v6.18`, arm64, with the current kmod and user.c, checked out and built on first run) into `site/images/<kernel>/` and snapshots each at the driver's ready line for the page's default machine (`run.mjs --snapshot`: `snap-5.bin.gz`, ~3 MB, resumed in ~0.3 s instead of a ~4 s boot; an image that did not change keeps its snapshot; layouts over 4 CPUs boot cold). That is `kstep viz build`; plain `kstep viz [--port N]` builds the same way first, incrementally, then serves `site/` locally, and `kstep viz serve` only serves (page edits show on a reload), and `kstep viz deploy` builds, gates on `pagetest.mjs` and `run.mjs --check` and force-pushes `site/` as the orphan `gh-pages` branch. Needs `rustup target add wasm32-unknown-unknown` and `cargo install wasm-bindgen-cli` at the version in `Cargo.lock` |
-| `run.mjs` | the playground headless under Node (>= 20): the round-robin demo (who ran on which CPU), `--bench <s>` for `tick`/`top` latency, `--check` to verify the staged image answers every verb the page uses and its snapshot resumes (the deploy gate), `--snapshot` to write the snapshot for `--smp` (default 5) next to `--image`; a run resumes from the image's snapshot when there is one, `--cold` boots regardless |
+| `run.mjs` | the playground headless under Node (>= 20): the round-robin demo (who ran on which CPU), `--bench <s>` for `tick`/`policy-fair` latency, `--check` to verify the staged image answers every verb the page uses and its snapshot resumes (the deploy gate), `--snapshot` to write the snapshot for `--smp` (default 5) next to `--image`; a run resumes from the image's snapshot when there is one, `--cold` boots regardless |
 | `site/index.html` | the front page: the playground, which boots a kernel with the `cli` driver on a configurable machine (sockets × clusters × cores × threads, per-core capacity), creates tasks and ticks the scheduler; a stack of uPlot figures over the same ticks (one toggle per figure, grouped per task and per CPU, the set living in `?charts=`) sharing one window, one zoom and one crosshair, with Placement -- a row per CPU, shared out among the tasks on it -- shown by default; then the Workload (tasks and cgroups as an outline, with policy, nice or priority, affinity and cgroup controls per task), the Scheduler (a box per CPU with its class queues), the Load balancer (the sched domains as nested boxes down to the CPUs, one running bar each coloured by the balancer's class, the balance countdowns and a log of what moved) and the Topology editor; a control bar under the scenarios holds the kernel selector, the clock and the kernel's status |
 
 `KSTEP_DIR` is the kSTEP checkout for `run.mjs`; it defaults to `..` (this repo as kSTEP's
@@ -53,18 +53,46 @@ tag (v10.2.50 -> v11.1.1 needed no code change), rebuild with `./setup.sh qemu`,
 * **wasm32.** QEMU is built with `--enable-wasm64-32bit-address-limit` (64-bit
   pointers in C, wasm32 output) so it also runs where Memory64 is missing
   (Safari, older Chrome and Firefox).
-* **Memory.** The wasm heap is 1 GB (`setup.sh` patches QEMU's emscripten
-  config, which says 2 GB) and the translation cache 64 MB; the playground guest
+* **emsdk.** Pinned to 6.0.10 (since 2026-09-24; 4.0.23 before, whose proxied poll() leaked
+  a setTimeout per call, 1.6 GB of JS heap after 90 s of ticks, and needed a patch to the
+  SDK). QEMU keeps g_poll() over Emscripten's ppoll(), which truncates the timeout to whole
+  ms and so busy-waited on sub-ms timers (the fork's meson.build; with ppoll, 6.x was 25%
+  slower to boot and 30-50% slower per command than 4.0.23, without it the two are level).
+  The fork's emscripten.txt lists `wasmMemory` in `INCOMING_MODULE_JS_API`, which 6.x dropped
+  from the default, and kstep.mjs's `send()` notifies the device node, since a blocked poll
+  wakes only on a notification. After an SDK bump, `rm -rf build/deps qemu/build`.
+* **Where a command's time goes.** Profiled 2026-09-24 with Linux perf (`node
+  --perf-basic-prof`, a build relinked with `--profiling-funcs`). During `--bench` the
+  driver's vCPU is half JIT'd guest code and 14% TB dispatch (every TB returns to C between
+  wasm instances); chaining TBs inside wasm (tail calls) is the lever left. Fixed that day,
+  together boot 3.5 -> 2.7 s, `tick` 1.9 -> 1.4 ms, `nice` 1.15 -> 0.8 ms: ioeventfd off
+  (qemu.rs, for every TCG run on virtio-mmio; an eventfd is a JS pipe on the page's
+  thread) and 128-bit guest accesses (arm64 LDP/STP) as two 64-bit ones with the inline
+  TLB fast path instead of a helper (tcg-op-ldst.c). No gain: `INSTANTIATE_NUM` 30/100/1000, `-sSUPPORT_LONGJMP=wasm`,
+  -O3 compiles and links.
+* **Single-threaded TCG (`thread=single`) loses.** Tried 2026-09-22 for the IPI fan-out
+  (`smp_call_function_single` per command): boot 7.4-9.5 s vs 3.6 s, `tick` 4.8 vs 2.3 ms,
+  `nice` alike, since boot and each tick run on every vCPU and a round-robin thread
+  serializes them. It also needs a backend fix: the wasm64 TB prologue loads `env` into a
+  wasm global only when that global is still zero, so an instance created under one vCPU
+  keeps its `env` when the same thread later runs another vCPU (first symptom: the
+  `icount_enabled()` assert in `cpu_loop_exec_tb`). Loading `env` from the context on
+  every entry fixes it at no measurable cost to `thread=multi`; not applied, since the
+  playground stays on MTTCG.
+* **Memory.** The wasm heap is 1 GB (the fork's emscripten.txt; upstream says 2 GB) and
+  the translation cache 64 MB; the playground guest
   gets 64 MB (the kernel leaves ~44 MB free at 5 CPUs; kSTEP touches ~20 MB). A run
   peaks around 0.6 GB of process memory.
-* **Output.** The three chardevs (the 16550 console, and virtio console ports for the
-  JSON channel and coverage: one virtqueue kick per write, where the 16550 cost one port
-  I/O exit per byte) write to Emscripten device nodes whose JavaScript callbacks receive
-  the bytes as QEMU emits them: no polling. QEMU never
+* **Output.** Three chardevs, all Emscripten device nodes whose JavaScript callbacks
+  receive the bytes as QEMU emits them: the kernel console on the PL011 UART (a
+  write-only file), kSTEP's JSON channel on a virtio console port (one virtqueue kick per
+  record) and the QEMU monitor. Machine state is not on the channel: after each reply the
+  page reads the region kmod/shm.h describes straight out of guest RAM, which is the wasm
+  heap. QEMU never
   exits under Emscripten, so the reboot line on the console marks completion, and
   a new run reloads the page.
 * **Why arm64.** The guest is kSTEP's aarch64 build on QEMU's `virt` machine, the same
-  arguments as `run.py` on an arm64 host. It reaches the kmod about 1 s sooner than the x86
+  arguments as `kstep run` on an arm64 host. It reaches the kmod about 1 s sooner than the x86
   `pc` machine did (no SeaBIOS, no ACPI or PCI enumeration, no LAPIC/TSC calibration), needs
   no firmware blobs, and its clock is the architected timer, so none of the x86 workarounds
   (`tsc_early_khz` for the coarse JS clock, `CONFIG_X86_PM_TIMER`, PVH to skip bzImage
@@ -74,13 +102,11 @@ tag (v10.2.50 -> v11.1.1 needed no code change), rebuild with `./setup.sh qemu`,
 
 ## CPU overview and configuration
 
-The CPUs section shows read-only `type: "cpu"` records emitted by the CLI driver's
-`top` command, one per isolated CPU before the final reply. The overview shows
-current task, `nr_running`, capacity, and fair-class PELT utilization (1024 is a
-full CPU; RT/DL utilization is excluded). The same table also shows fair load and
-runnable averages, root CFS minimum vruntime, and cumulative context switches.
-Older images show unavailable counters rather than inferred runqueue values;
-`run.mjs --check` requires these records before deployment.
+The CPUs section reads each isolated CPU from the shared state region (kmod/shm.h),
+rewritten after every command: current task, `nr_running`, capacity, frequency, and the
+root fair queue's PELT utilization (1024 is a full CPU; RT/DL utilization is excluded),
+runnable and load averages, and cumulative context switches. `run.mjs --check` verifies
+the region decodes before deployment.
 
 The Charts section is the run: one column per tick, the window set by the wheel (pan) and the
 column width (ctrl or cmd wheel to zoom), and every figure handed that same window so a column

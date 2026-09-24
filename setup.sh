@@ -13,7 +13,7 @@ mkdir -p "$W/build"
 # QEMU is the qemu/ submodule: https://github.com/kstep-dev/qemu, branch kstep = upstream
 # v11.1.1 + Kohei Tokunaga's wasm64 JIT backend (squashed from ktock/qemu wasm64-tcg-b) + the
 # kSTEP tuning commit (1 GB heap, INSTANTIATE_NUM 300, 4 virtio-mmio slots, the kstep device set).
-EMSDK_VERSION=4.0.23
+EMSDK_VERSION=6.0.10
 
 toolchain() {  # emsdk and the cross-built deps prefix
   source "$W/build/emsdk/emsdk_env.sh" >/dev/null 2>&1
@@ -23,10 +23,9 @@ toolchain() {  # emsdk and the cross-built deps prefix
 
 setup() {
   sudo apt-get install -y -q autoconf build-essential libglib2.0-dev libtool pkgconf ninja-build
-  if [ ! -d "$W/build/emsdk" ]; then
-    git clone -q --depth 1 https://github.com/emscripten-core/emsdk.git "$W/build/emsdk"
-    (cd "$W/build/emsdk" && ./emsdk install $EMSDK_VERSION && ./emsdk activate $EMSDK_VERSION)
-  fi
+  [ -d "$W/build/emsdk" ] || git clone -q --depth 1 https://github.com/emscripten-core/emsdk.git "$W/build/emsdk"
+  # after a version bump, also rm -rf build/deps qemu/build: they keep objects of the old SDK
+  (cd "$W/build/emsdk" && git pull -q && ./emsdk install $EMSDK_VERSION && ./emsdk activate $EMSDK_VERSION)
 }
 
 # Mirrors upstream tests/docker/dockerfiles/emsdk-wasm64-cross.docker, without Docker; glib's meson
@@ -65,14 +64,6 @@ deps() {
 qemu() {
   toolchain
   export CFLAGS="-O3 -pthread -DWASM_BIGINT" CXXFLAGS="-O3 -pthread -DWASM_BIGINT" LDFLAGS="-sWASM_BIGINT -sASYNCIFY=1 -L$TARGET/lib"
-  # Emscripten's proxied poll() arms a setTimeout for the poll's timeout and never cancels it
-  # when the poll completes early, so every poll QEMU's main loop makes (several per command)
-  # leaves a pending timer and its closures behind for the length of the timeout: ~60 KB per
-  # tick of JS heap, 1.6 GB after 90 s of ticks. Cancel the timer on completion (emsdk 4.0.23).
-  lib="$W/build/emsdk/upstream/emscripten/src/lib/libsyscall.js"
-  if ! grep -q pollTimer "$lib"; then
-    sed -i 's/^    var notifyDone = false;$/    var notifyDone = false;\n    var pollTimer;/; s/^      notifyDone = true;$/      notifyDone = true;\n      clearTimeout(pollTimer);/; s/^        setTimeout(() => {$/        pollTimer = setTimeout(() => {/' "$lib"
-  fi
   src="$W/qemu"
   [ -f "$src/configure" ] || git -C "$W" submodule update --init --depth 1 qemu
   mkdir -p "$src/build" && cd "$src/build"
