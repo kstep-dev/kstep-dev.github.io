@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kSTEP: Kernel Scheduler Test and Evaluation Platform</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="uPlot.min.css">
+<script src="uPlot.iife.min.js"></script>
+<style>
+  td input { padding: 0 .2rem; font-size: .85rem; }
+  td input.bad { border-color: crimson; color: crimson; }
+  td select { padding: 0 .2rem; font-size: .85rem; }
+  #tasks th, #tasks td { text-align: right; font-variant-numeric: tabular-nums; }
+  /* the button that adds a row lines up under the row actions, so every button in the table
+     is in one column; the foot goes with it while the VM is booting and the button is hidden */
+  #tasks tfoot td { text-align: right; }
+  #tasks th:first-child, #tasks td:first-child { text-align: left; }
+  #tasks input.inert { color: GrayText; }   /* a parameter the task's class does not read */
+  /* queues: one table per CPU, the root queue's rows first and a cgroup's queue indented under
+     its entity's row, since that queue hangs off that entity. Rows are the entities the queue
+     picks between, tasks and group entities alike, in the kernel's order */
+  /* one box per CPU, all the same width, and a row's boxes the same height: a task moving
+     between CPUs or classes changes what is inside a box, not the boxes */
+  #queues { display: grid; grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr)); gap: .6rem; margin: .3rem 0 .6rem; }
+  .rq { border: 1px solid GrayText; border-radius: .35rem; padding: .35rem .45rem; min-width: 0; overflow-x: auto; }
+  .rq > header { display: flex; gap: .6rem; align-items: baseline; font-size: .85rem; color: GrayText; }
+  .rq > header > .cpu { color: CanvasText; font-weight: 600; }
+  .rq > header > .note { margin-left: auto; }   /* the runqueue's number at the right, as a class's are */
+  .rq > header b { color: CanvasText; font-weight: 600; }
+  .rq > header .task-chip { vertical-align: middle; }
+  /* a class's block inside a CPU's box: its own line, then its table */
+  .rq .class { margin-top: .5rem; }   /* the class's name marks where its block starts */
+  /* the class's line: its name in front, the class's numbers pushed to the right */
+  .rq .class > header { display: flex; gap: .6rem; align-items: baseline; font-size: .85rem; color: GrayText; }
+  .rq .class > header .name { color: CanvasText; font-weight: 600; }
+  .rq .class > header .name small { color: GrayText; font-weight: normal; margin-left: .3rem; }
+  .rq .class > header .note:first-of-type { margin-left: auto; }
+  .rq .class.throttled > header .name { color: GrayText; text-decoration: line-through; }   /* the real-time class is off the CPU until the period ends */
+  .rq.idle { border-style: dashed; }
+  .rq table { font-size: .85rem; border-collapse: collapse; margin-top: .2rem; }
+  .rq th, .rq td { text-align: right; font-variant-numeric: tabular-nums; padding: 0 .3rem; }
+  .rq th:first-child, .rq td:first-child { text-align: left; padding-left: 0; }
+  .rq th { color: GrayText; font-weight: normal; }
+  .rq tr.ineligible td { color: GrayText; }
+  /* the marker for the task that ran: its space is reserved on every row, so the column does not
+     widen on whichever row has it this tick */
+  .rq td:first-child::after { content: '\25B6'; display: inline-block; width: .7rem; text-align: right; font-size: .55rem; visibility: hidden; }
+  .rq tr.running td:first-child::after { visibility: visible; }
+  .rq tr.next td:first-child::after { content: '\25B7'; visibility: visible; }   /* what pick_eevdf would take next */
+  .rq .path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .rq .note { font-variant-numeric: tabular-nums; }
+  #cpu-hint { margin: 0; }
+  /* scenario tabs: the page's navigation; everything below is the selected scenario */
+  #scenarios { display: flex; flex-wrap: wrap; gap: 0; margin: 1.2rem 0 0; border-bottom: 1px solid GrayText; }
+  #scenarios button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: none; padding: .35rem .8rem; margin-bottom: -1px; color: GrayText; }
+  #scenarios button:hover { color: CanvasText; background: none; }
+  #scenarios button.active { color: CanvasText; font-weight: 600; border-bottom-color: AccentColor; }
+  #scenario-text { margin: .6rem 0 0; }
+  #legend { margin: .3rem 0 0; font-size: .85rem; }
+  #cpu-hint:empty { display: none; }
+  #cpu-hint.bad { color: crimson; }
+  /* the control bar: the kernel to boot, then the clock, one row under the scenario's text */
+  #controls { display: flex; flex-wrap: wrap; align-items: center; gap: .9rem; margin: .8rem 0 0; }
+  #controls #kernel { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  /* the kernel is one choice, the clock another: a rule between them, the row's height like .sep's */
+  #controls #clock { align-self: stretch; padding-left: .9rem; border-left: 1px solid color-mix(in srgb, GrayText 60%, transparent); }
+  /* the two buttons are one group -- what you press; the rate box is a setting, behind a rule */
+  #clock { display: inline-flex; gap: .35rem; align-items: center; font-size: 1rem; font-weight: normal; }
+  #clock label { font-size: .85rem; }
+  #play { width: 4.6rem; padding-left: 0; padding-right: 0; }   /* one width for both of its words, so the row does not shift as it toggles */
+  /* align-self: stretch so the rule is the row's height, not the small text's */
+  #clock .sep { align-self: stretch; margin-left: .55rem; padding-left: .9rem; display: flex; align-items: center; gap: .3rem;
+                border-left: 1px solid color-mix(in srgb, GrayText 60%, transparent); }
+  #clock .sep input { min-width: 0; }   /* the browser's default number-box width; min-width 0 lets it shrink in the flex row */
+  #figure-picks { margin: 0 0 .7rem; display: flex; flex-direction: column; gap: .3rem; }
+  .pick-row { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+  .pick-row > .pick-label { color: GrayText; font-size: .8rem; width: 4.2rem; flex: none; }
+  .chip { display: inline-flex; align-items: center; padding: .15rem .6rem; font-size: .82rem; line-height: 1.5;
+          border: 1px solid color-mix(in srgb, GrayText 45%, transparent); border-radius: 1rem;
+          cursor: pointer; user-select: none; white-space: nowrap; }
+  .chip:hover { background: color-mix(in srgb, GrayText 14%, Canvas); }
+  .chip.on { background: AccentColor; color: AccentColorText; border-color: transparent; }
+  .chip input { position: absolute; opacity: 0; width: 0; height: 0; }   /* the checkbox is still the control */
+  .chip:focus-within { outline: 2px solid Highlight; outline-offset: 2px; }
+  @media (max-width: 560px) { .pick-row > .pick-label { width: 100%; } }
+  .chart { border: 1px solid GrayText; margin-bottom: .5rem; }
+  .chart-head { display: flex; align-items: baseline; gap: .4rem; flex-wrap: wrap; padding: .3rem .4rem 0; font-size: .85rem; color: GrayText; }
+  .chart-head b { color: CanvasText; font-weight: 600; }
+  /* the workload is one table: a cgroup's row, then its tasks and child cgroups one step in */
+  #tasks tr.group td { background: color-mix(in srgb, GrayText 10%, Canvas); color: GrayText; font-size: .85rem; }
+  #tasks tr.group .path { font-weight: 600; color: CanvasText; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  #tasks tr.group input[type=number] { width: 3.4rem; }
+  /* the parameter, named by its class; one width for "nice" and "priority", so the row holds still when the policy changes */
+  #tasks td label { display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; min-width: 6.8rem; }
+  #tasks tr.group .f-label { font-size: .75rem; }
+  #tasks tr.group button { padding: 0 .35rem; font-size: .7rem; line-height: 1.5; }
+  #tasks tr.group td:last-child > span { display: inline-flex; }
+  #tasks td:first-child { padding-left: calc(.2rem + var(--depth, 0) * 1.2rem); }
+  .task-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 1.4rem;
+    padding: 0 .3rem; border-radius: .25rem; font-size: .75rem; color: #fff; font-variant-numeric: tabular-nums;
+    user-select: none; }
+  #tasks td select.cgroup { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }
+  .chart-head .note { flex: 1 1 12rem; min-width: 0; }
+  /* uPlot follows the page's system colours instead of its own light-mode defaults */
+  .uplot .u-axis, .u-legend { color: CanvasText; }
+  .u-legend { font-size: .8rem; padding: .2rem 0 0 48px; text-align: left; }
+  .u-legend .u-series > * { padding: 0 .35rem; }
+  .u-legend .u-marker { border-radius: 2px; }
+  .u-legend tr.u-off > * { opacity: .35; }   /* a series hidden by clicking its legend entry */
+  .u-cursor-x, .u-cursor-y { border-color: color-mix(in srgb, GrayText 60%, transparent); }
+  #bugs th { text-align: left; }
+  #bugs td { vertical-align: middle; padding: .5rem; }
+  #bugs td:last-child { width: 55%; text-align: center; }
+  #bugs img { max-height: 14rem; max-width: 100%; }
+  #bugs td div { line-height: 1.6; }
+  /* the domain tree: a box per span, its groups inside it, CPU cards at the leaves */
+  #balancer { margin: .3rem 0 .6rem; overflow-x: auto; }
+  #balancer:empty::before { content: 'no sched domains: one CPU'; color: GrayText; font-size: .85rem; }
+  .dom { border: 1px solid GrayText; border-radius: .35rem; padding: .35rem .45rem; min-width: 0; overflow: hidden; }
+  .dom > header { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; font-size: .8rem; color: GrayText; margin-bottom: .25rem; }
+  .dom > header > span:last-child { margin-left: auto; }   /* the task count at the right */
+  .dom > footer { display: flex; justify-content: flex-end; font-size: .8rem; color: GrayText; margin-top: .3rem; }
+  .dom > footer .stat { font-variant-numeric: tabular-nums; }
+  .dom > footer .stat b { color: CanvasText; font-weight: 600; }
+  .dom > footer:empty, .dom > footer .stat:empty { display: none; }
+  .dom > header .stat { color: GrayText; font-variant-numeric: tabular-nums; }
+  .dom > header .stat b { color: CanvasText; font-weight: 600; }
+  .dom > header .lvl { color: CanvasText; font-weight: 600; }
+  .dom > header .span { font-variant-numeric: tabular-nums; }
+  /* sibling boxes side by side while they fit, at least 22rem each and at most four across; wider ones stack */
+  .dom > .bar { margin: 0 0 .6rem; }   /* room between a box's bar and what it sums */
+  .dom > .kids { display: grid; grid-template-columns: repeat(auto-fit, minmax(max(22rem, calc(25% - .3rem)), 1fr)); gap: .4rem; }
+  /* a CPU's card: name, frequency and the balancer's word on one line, the bar across the card,
+     the readings under it; a group's cards sit side by side */
+  /* cards at least 11rem wide, and never more than four across: a card is at least a quarter of the row less the gaps */
+  .dom > .kids.cpus, #balancer.cpus { display: grid; grid-template-columns: repeat(auto-fit, minmax(max(11rem, calc(25% - .3rem)), 1fr)); gap: .4rem; }
+  .cpu-row { border: 1px dotted GrayText; border-radius: .3rem; padding: .3rem .45rem; display: flex; flex-direction: column; gap: .2rem; font-size: .8rem; line-height: 1.35; min-width: 0; }
+  .cpu-row .line { display: flex; flex-wrap: wrap; align-items: center; gap: 0 .7rem; white-space: nowrap; }
+  .cpu-row .line > .stat:last-child { margin-left: auto; }   /* the task count, and the countdown below it, at the right as in a box */
+  .cpu-row > .bar { flex: none; line-height: 1; }
+  .cpu-row .freq input { padding: 0 .2rem; font-size: .8rem; }
+  .cpu-row .cpu { font-weight: 600; }
+  .cpu-row .freq { display: inline-flex; align-items: center; gap: .3rem; color: GrayText; }
+  .cpu-row .freq input { width: 3.2rem; }
+  .cpu-row .stat { color: GrayText; font-variant-numeric: tabular-nums; }
+  .cpu-row .stat b { color: CanvasText; font-weight: 600; }
+  .cpu-row .hot:empty { display: none; }
+  /* one bar per box: the fill is running in the class's colour, the number inside at the right */
+  .bar { display: block; min-width: 0; }
+  .bar .track { position: relative; display: block; height: .85rem; border: 1px solid color-mix(in srgb, GrayText 55%, transparent); border-radius: .2rem; overflow: hidden; background: Canvas; }
+  .bar .fill { position: absolute; inset: 0 auto 0 0; background: color-mix(in srgb, AccentColor 60%, Canvas); }
+  .bar[data-cls="has spare"] .fill { background: color-mix(in srgb, seagreen 65%, Canvas); }
+  .bar[data-cls="fully busy"] .fill { background: color-mix(in srgb, darkorange 70%, Canvas); }
+  .bar[data-cls="overloaded"] .fill { background: color-mix(in srgb, crimson 80%, Canvas); }
+  .bar .num { position: absolute; inset: 0 .35rem 0 auto; display: flex; align-items: center; font-size: .62rem; line-height: 1; color: CanvasText; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .hot { color: crimson; font-weight: 600; }
+  .cpu-row.pulled { border-style: solid; border-color: color-mix(in srgb, AccentColor 70%, GrayText); }
+  /* the recent balances and moves, newest first */
+  #balance-log { margin: .3rem 0 .6rem; padding-left: 3.4rem; font-size: .8rem; color: GrayText; font-variant-numeric: tabular-nums; }
+  #balance-log li { margin: .1rem 0; }
+  #balance-log li::marker { content: 'tick ' attr(value) '  '; }
+  #balance-log .task-chip { vertical-align: middle; }
+  #balance-log:empty::before { content: 'nothing has moved yet'; margin-left: -3.4rem; }
+  #cpus h3 { margin: 1.2rem 0 .4rem; font-size: .95rem; }
+  #cpu-draft { font-size: .85rem; font-weight: normal; }
+  #cpu-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin: .6rem 0; align-items: center; }
+  #cpu-layout input { width: 3rem; }
+  /* the machine drawing, which is also the form: every box is the thing it draws */
+  #cpu-layout { width: auto; margin: .5rem 0; font-size: .85rem; display: flex; flex-wrap: wrap; gap: .5rem; align-items: flex-start; }
+  #cpu-layout .socket { border: 1px solid GrayText; border-radius: .35rem; padding: .35rem .45rem; }
+  #cpu-layout .cluster { border: 1px dashed GrayText; border-radius: .3rem; padding: .3rem .4rem; }
+  #cpu-layout header { font-size: .7rem; color: GrayText; margin-bottom: .3rem; display: flex; align-items: center; gap: .25rem; }
+  #cpu-layout .core > header { margin-bottom: .2rem; }
+  #cpu-layout .clusters, #cpu-layout .cores { display: flex; flex-wrap: wrap; gap: .4rem; align-items: flex-start; }
+  #cpu-layout .core { border: 1px dotted GrayText; border-radius: .25rem; padding: .3rem; display: flex; flex-direction: column; gap: .25rem; align-items: stretch; }
+  #cpu-layout .core > button.act { align-self: flex-start; }
+  #cpu-layout .corecpus { display: inline-flex; flex-wrap: wrap; gap: .25rem; align-items: center; }
+  #cpu-layout .thread { display: inline-flex; align-items: center; gap: .15rem; font-size: .72rem; font-variant-numeric: tabular-nums;
+    border: 1px solid color-mix(in srgb, GrayText 45%, transparent); border-radius: .25rem; padding: 0 .3rem; }
+  #cpu-layout .thread button.act { padding: 0 .15rem; font-size: .6rem; border: 0; background: none; }
+  #cpu-layout .cpuline { display: flex; flex-direction: column; align-items: flex-start; gap: .25rem; }   /* the threads, then the capacity on its own line */
+  #cpu-layout .caprow { display: inline-flex; align-items: center; gap: .3rem; font-size: .7rem; color: GrayText; }
+  #cpu-layout .capnum { width: 3.2rem; font-size: .72rem; padding: 0 .2rem; font-variant-numeric: tabular-nums; }
+  #cpu-layout .capnum.bad { border-color: crimson; color: crimson; }
+  /* every box action looks the same, whatever it says; adding sits by the name, so clicking it
+     twice lands twice, and only the destructive one is pushed to the right edge */
+  #cpu-layout header .name { white-space: nowrap; margin-right: .1rem; }
+  #cpu-layout header button.rm { margin-left: auto; }
+  #cpu-layout button.act { padding: 0 .3rem; font-size: .7rem; line-height: 1.5; white-space: nowrap;
+    font-variant-numeric: tabular-nums; align-self: center; }
+  #cpu-layout > button.act { margin-top: .2rem; }
+  /* the page keeps its scrollbar's width whether or not the content needs one, so a right-aligned
+     line does not jump when opening the logs makes the page taller */
+  html { scrollbar-gutter: stable; }
+  /* the machine's status ends the control row and stays there when the logs open: the details box
+     lays out as its children, so the summary is an item of the row and the panes take a row of their own */
+  #kernel-logs { display: contents; }
+  #kernel-logs summary { margin-left: auto; }
+  #kernel-logs #panes { flex-basis: 100%; }
+  #kernel-logs summary { cursor: pointer; }
+  #kernel-logs #status { margin-left: 0; color: inherit; }
+  #kernel-logs #status.bad { color: crimson; font-weight: 600; }
+  #kernel-logs #panes { margin-top: .6rem; }
+  /* one gray line: the status, the boot's latest console line while it lasts, and the log toggle */
+  #kernel-logs summary { color: GrayText; font-size: .85rem; }
+  #boot-preview { display: inline-block; max-width: 22rem; vertical-align: bottom; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: .5rem; font: 12px/1.5 ui-monospace, monospace; }
+  pre .err { color: crimson; }
+  pre .event { opacity: .6; }
+</style>
+</head>
+<body>
+<header>
+  <h1>kSTEP: Kernel Scheduler Test and Evaluation Platform</h1>
+  <nav><a href="assets/paper-osdi26.pdf">Paper</a><a href="https://github.com/kstep-dev/kstep">Code</a></nav>
+</header>
+<p>kSTEP (<a href="assets/paper-osdi26.pdf">OSDI ’26</a>) runs the unmodified Linux CPU scheduler deterministically, one tick at a time, on CPUs it isolates. A Linux kernel boots below when the page loads, with kSTEP holding its scheduler clock. Nothing happens in it except what you ask for: create tasks, change their nice value or affinity, pause or kill them, pick the machine's topology, and advance the scheduler one tick at a time.</p>
+
+<section id="playground" aria-label="playground">
+<nav id="scenarios" aria-label="scenarios"></nav>
+<p id="scenario-text"></p>
+
+<div id="controls">
+  <label title="The Linux release the playground boots: every supported LTS kernel has an image. Changing it restarts with the same scenario."><select id="kernel"></select></label>
+  <span id="clock" hidden><button id="play" title="stop the clock">pause</button><button id="step" title="stop the clock and advance exactly one tick">step</button><button id="restart" title="restart the VM from this scenario's initial condition: the same machine and setup script, with fresh tasks, cgroups and charts (reloads the page)">restart</button>
+  <label class="sep"><input id="speed" type="number" min="1" max="1000" step="10" value="20" title="ticks per second while the clock runs"> ticks/s</label></span>
+  <details id="kernel-logs">
+    <summary><span id="status" role="status">Loading kernel…</span><span id="boot-elapsed" class="hint" aria-hidden="true"></span><span id="boot-preview" hidden></span> · logs</summary>
+    <div id="panes">
+      <div class="pane"><h3>Kernel console</h3><pre id="console"></pre></div>
+      <div class="pane"><h3>kSTEP trace</h3><pre id="log"></pre></div>
+    </div>
+  </details>
+</div>
+
+
+<h2>Charts</h2>
+<div id="figure-picks"></div>
+<p class="hint" id="legend">One column per tick, newest on the right. Hover for values; wheel to pan back through the run, ctrl (or ⌘) wheel to zoom.</p>
+<div id="charts"></div>
+
+<h2>Workload</h2>
+<div class="table-scroll" role="region" aria-label="Tasks" tabindex="0">
+<table id="tasks"><thead><tr><th>task</th><th title="The cgroup the task is in. Pick another to move it there; a cgroup with child cgroups cannot take tasks (cgroup v2 keeps tasks and controlled children apart), so it is greyed out.">cgroup</th><th>state</th><th title="A task's allowed CPUs; a cgroup's cpuset.cpus">affinity</th><th>cpu</th><th title="sum_exec_runtime: CPU time this task has actually been given, in milliseconds of real time">cpu time</th><th title="How the task is scheduled, as sched_setattr takes it: the policy, grouped by the class that implements it, and the one parameter that class reads -- nice for the fair classes (normal, batch), a real-time priority for fifo and rr. SCHED_IDLE ignores nice as well, so it is greyed there. The weight the fair class derives from nice is under Scheduler, next to the siblings it is compared against.">policy</th><th></th></tr></thead><tbody></tbody></table>
+</div>
+
+
+<h2>Scheduler</h2>
+<p class="hint">One box per CPU: its runqueue in the header, then each class with something queued. Real-time first, since it outranks fair; the fair queue picks the eligible entity with the earliest deadline, a task or a cgroup whose own queue is indented under it.</p>
+<div id="queues"></div>
+
+<h2>Load balancer</h2>
+<p class="hint">The sched domains the kernel built, a box per span down to the CPUs; a level that adds nothing is dropped by the kernel and absent here. One bar per box: <b>running</b>, the time fair tasks were on the CPU, over the box&#x27;s capacity, 1024 being one CPU at full speed, in the colour of the balancer&#x27;s verdict: green has spare room, orange is fully busy, red is overloaded. Hover it for the two other averages the balancer reads, contention and load, and hover a level&#x27;s name for its flags and thresholds. Each box says in how many ticks it is next weighed against its siblings. <span id="domains-collapsed"></span></p>
+<div id="balancer"></div>
+<p class="hint">What moved, and why, per command: a <i>balance</i> is a CPU running the balancer at a level and pulling from the busiest group's busiest CPU; a move on a create or wake is the wakeup placement, which picks an idle CPU near where the task last ran or near its waker. The destination is always the CPU that did the pulling.</p>
+<ol id="balance-log" reversed></ol>
+
+
+<section id="cpus" aria-labelledby="cpus-title">
+<h2 id="cpus-title">Topology <span id="cpu-draft" class="hint"></span></h2>
+
+<section id="cpu-editor">
+<p class="hint">The machine: its sockets, their clusters of cores, and each core's threads and capacity. A cluster is a shared cache, and its cores need not be alike. Each thread is one CPU, numbered cpu 1 upwards across the tree; cpu 0 runs the driver and is kept out of the scheduler's reach. Capacity is the hardware and is applied at boot; frequency, on each CPU's card under Load balancer, changes while it runs. Changing the machine restarts the VM and resets tasks, cgroups and the charts.</p>
+<div id="cpu-layout"></div>
+<p id="cpu-hint" class="hint" role="status"></p>
+<div id="cpu-actions"><span id="ncpus-label"></span><button id="boot">Restart with these CPUs</button><button id="discard-cpus">Discard changes</button></div>
+
+</section>
+</section>
+</section>
+
+<h2>Reproduced bugs</h2>
+<p>Each row is a real Linux CPU scheduler bug with a kSTEP driver that triggers it; the plot compares the trace of the buggy and the fixed kernel. <code>./reproduce.py &lt;bug&gt;</code> in the kSTEP repo builds both kernels and reruns the driver.</p>
+<div class="table-scroll" role="region" aria-label="Reproduced bugs" tabindex="0">
+<table id="bugs">
+  <thead><tr><th>Bug, driver, and fix</th><th>Buggy vs fixed</th></tr></thead>
+  <tbody></tbody>
+</table>
+</div>
+
+<h2>How kSTEP works</h2>
+<p>A driver program (kernel code, one per bug) declares a sequence of scheduler-invoking events: task creation, wakeups, sleeps, cgroup changes, ticks. The kSTEP module dispatches them on CPUs isolated from the rest of the system, with the scheduler clock and the tick under its control, so the unmodified scheduler runs the same code path it would in production and produces the same trace on every run. The plot in each row compares that output for the buggy and the fixed kernel.</p>
+<figure><img src="figures/arch.svg" alt="kSTEP architecture"></figure>
+<ul>
+  <li><b>Timing.</b> Logical time advances only when the driver ticks, so events can be placed inside transient windows a few microseconds wide.</li>
+  <li><b>Control.</b> Drivers create and steer tasks and cgroups, trigger kernel activities such as load balancing, and set CPU frequency and topology.</li>
+  <li><b>Determinism.</b> Mocked clocks, isolated CPUs and reset state make the same driver produce the same trace, so buggy and fixed kernels can be compared line by line.</li>
+  <li><b>Fidelity.</b> kSTEP never writes scheduler state directly; every state it reaches is reachable on a real system through the same code paths.</li>
+</ul>
+
+<h2>Paper</h2>
+<p><a href="assets/paper-osdi26.pdf">kSTEP: Characterization and Deterministic Testing of Linux CPU Scheduler Bugs</a>.
+Tingjia Cao, Shawn (Wanxiang) Zhong, Caeden Whitaker, Ke Han, Andrea C. Arpaci-Dusseau, Remzi H. Arpaci-Dusseau.
+OSDI '26.</p>
+<p>We present an in-depth study of CPU scheduler bugs, covering both functional violations and
+misalignments between implementation and policy. Our study shows that these bugs are hard to
+observe and even harder to trigger. To close this gap, we introduce kSTEP. kSTEP gives testers
+fine-grained control over scheduler-invoking events and runs them deterministically on isolated
+CPUs. kSTEP produces noise-free, repeatable traces that expose subtle behavior. We then build a
+coverage-guided fuzzer on top of kSTEP for automated CPU scheduler testing. We demonstrate
+kSTEP's effectiveness by reproducing seven real-world scheduler bugs and uncovering four new ones.</p>
+
+<h2>Resources</h2>
+<ul>
+  <li><a href="https://github.com/kstep-dev/kstep">kstep</a>: framework, drivers, fuzzer, and automation scripts.</li>
+  <li><a href="https://github.com/kstep-dev/study">study</a>: the bug study dataset and analysis.</li>
+  <li><a href="https://github.com/kstep-dev/results">results</a>: buggy and fixed traces and plots for every reproduced bug.</li>
+  <li><a href="https://github.com/kstep-dev/kstep-dev.github.io">kstep-dev.github.io</a>: this page and the WebAssembly build of QEMU behind it.</li>
+</ul>
+
+
+<script src="coi-serviceworker.min.js"></script>
+<script type="module">
+// data.json carries the version stamp that busts viz.mjs's cache, so it is fetched first
+// and handed straight to init(). Everything else lives in that module.
+let data = { version: '', bugs: [] };
+try {
+  const response = await fetch('data.json', { cache: 'no-store' });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  data = await response.json();
+} catch (e) {
+  const el = document.getElementById('status');
+  el.textContent = 'data.json failed: ' + e.message; el.className = 'bad';
+  document.getElementById('kernel-logs').open = true;
+}
+const { init } = await import(`./viz.mjs?v=${data.version}`);
+init(data);
+</script>
+</body>
+</html>
